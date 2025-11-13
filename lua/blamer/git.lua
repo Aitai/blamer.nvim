@@ -19,7 +19,7 @@ local M = {}
 ---@return table result {stdout: string[], stderr: string[], code: number}
 local function git_exec(args, opts)
   opts = opts or {}
-  
+
   -- Build command with optimized git flags
   local cmd = {
     "git",
@@ -29,22 +29,22 @@ local function git_exec(args, opts)
     "-c", "gc.auto=0",
   }
   vim.list_extend(cmd, args)
-  
+
   local system_opts = {
     text = true,
   }
-  
+
   if opts.stdin then
     system_opts.stdin = opts.stdin
   end
-  
+
   -- If streaming callback provided, use it
   if opts.on_stdout then
     system_opts.stdout = opts.on_stdout
   end
-  
+
   local obj = vim.system(cmd, system_opts):wait()
-  
+
   -- Split stdout into lines
   local stdout_lines = {}
   if obj.stdout and obj.stdout ~= "" then
@@ -54,13 +54,13 @@ local function git_exec(args, opts)
       stdout_lines[#stdout_lines] = nil
     end
   end
-  
+
   -- Split stderr into lines
   local stderr_lines = {}
   if obj.stderr and obj.stderr ~= "" then
     stderr_lines = vim.split(obj.stderr, "\n")
   end
-  
+
   return {
     stdout = stdout_lines,
     stderr = stderr_lines,
@@ -79,7 +79,7 @@ function M.parse_blame_porcelain(output)
   while i <= #output do
     local line = output[i]
     local commit, orig_line, final_line, num_lines = line:match("^([a-f0-9]+) (%d+) (%d+) ?(%d*)")
-    
+
     if commit then
       -- Initialize commit info if not seen before
       if not commit_info[commit] then
@@ -104,7 +104,7 @@ function M.parse_blame_porcelain(output)
       local found_filename = false
       while i <= #output and not found_filename do
         local metadata_line = output[i]
-        
+
         -- A new commit line starts
         if metadata_line:match("^[a-f0-9]+ %d+ %d+") then
           break
@@ -152,7 +152,7 @@ function M.parse_blame_porcelain(output)
           i = i + 1
           break
         end
-        
+
         -- Skip other metadata we don't care about (committer, boundary, etc.)
         i = i + 1
         ::continue::
@@ -172,10 +172,10 @@ function M.parse_blame_porcelain(output)
           filename = info.filename,
           previous = info.previous,
         }
-        
+
         entries_map[final_line_num + j] = entry
       end
-      
+
       -- Skip the content line if present (starts with tab)
       -- In incremental mode, content lines are omitted
       if i <= #output and output[i]:match("^\t") then
@@ -197,7 +197,7 @@ function M.parse_blame_porcelain(output)
       max_line = line_num
     end
   end
-  
+
   for line_num = 1, max_line do
     if entries_map[line_num] then
       table.insert(entries, entries_map[line_num])
@@ -219,7 +219,7 @@ function M.blame_file(file, commit)
   end
 
   local args = { "blame", "--incremental", "--porcelain" }
-  
+
   if commit then
     table.insert(args, commit)
   end
@@ -237,10 +237,10 @@ function M.blame_file(file, commit)
   end
 
   local entries = M.parse_blame_porcelain(result.stdout)
-  
+
   -- Cache the result
   cache.set_blame(file, commit, entries)
-  
+
   return entries
 end
 
@@ -251,7 +251,7 @@ end
 function M.blame_buffer(file, content)
   local args = { "blame", "--incremental", "--porcelain", "--contents", "-", "--", file }
   local input = table.concat(content, "\n") .. "\n"
-  
+
   local result = git_exec(args, { stdin = input })
 
   if result.code ~= 0 then
@@ -289,10 +289,10 @@ function M.show_file(file, commit)
   end
 
   local content = result.stdout
-  
+
   -- Cache the result
   cache.set_file(file, commit, content)
-  
+
   return content
 end
 
@@ -300,7 +300,7 @@ end
 ---@param timestamp number Unix timestamp
 ---@return string Formatted date (YYYY-MM-DD)
 function M.format_date(timestamp)
-  return os.date("%Y-%m-%d", timestamp)
+  return os.date("%Y-%m-%d", timestamp) --[[@as string]]
 end
 
 ---Get abbreviated commit hash

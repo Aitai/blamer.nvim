@@ -45,38 +45,9 @@ local function parse_commit_info(lines)
   return info
 end
 
----Parse diff stats from git show --stat output
----@param lines string[]
----@return table[] files
-local function parse_diff_stats(lines)
-  local files = {}
-  local in_stats = false
-
-  for _, line in ipairs(lines) do
-    if line:match("^ .+%s+|") then
-      in_stats = true
-      local path, changes = line:match("^ (.-)%s+|%s+(.+)")
-      if path and changes then
-        local additions = changes:match("%+*")
-        local deletions = changes:match("%-*")
-        table.insert(files, {
-          path = vim.trim(path),
-          changes = vim.trim(changes),
-          additions = additions and #additions or 0,
-          deletions = deletions and #deletions or 0,
-        })
-      end
-    elseif in_stats and line:match("^%s*%d+ file") then
-      break
-    end
-  end
-
-  return files
-end
-
 ---Create commit view buffer in a new tab
 ---@param commit string
----@return number buf, number win
+---@return number|nil buf, number|nil win, string|nil oid
 function M.create_commit_view(commit)
   local result = git.git_exec({ "show", "--format=fuller", commit })
 

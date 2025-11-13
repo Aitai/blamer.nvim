@@ -27,6 +27,7 @@ local api = vim.api
 local Blamer = {}
 Blamer.__index = Blamer
 
+---@type Blamer|nil
 local current_instance = nil
 
 ---Create new blamer instance
@@ -34,7 +35,7 @@ local current_instance = nil
 ---@return Blamer|nil
 function Blamer.new(file_path)
   file_path = file_path or vim.fn.expand("%:p")
-  
+
   local git_root = git.get_git_root()
   if not git_root then
     vim.notify("Not in a git repository", vim.log.levels.ERROR, { title = "Blamer" })
@@ -73,23 +74,23 @@ function Blamer:ensure_full_blame()
   if #self.blame_entries > 0 then
     return true  -- Already loaded
   end
-  
+
   local blame_entries, err
-  
+
   if self.original_modified and api.nvim_buf_is_valid(self.view_buf) then
     local content = api.nvim_buf_get_lines(self.view_buf, 0, -1, false)
     blame_entries, err = git.blame_buffer(self.file_path, content)
   else
     blame_entries, err = git.blame_file(self.file_path, self.current_commit)
   end
-  
+
   if not blame_entries then
     vim.notify("Git blame failed: " .. (err or "Unknown error"), vim.log.levels.ERROR, { title = "Blamer" })
     return false
   end
-  
+
   self.blame_entries = blame_entries
-  
+
   return true
 end
 
@@ -186,16 +187,16 @@ end
 ---@param highlights table[]
 function Blamer:apply_highlights(highlights)
   api.nvim_buf_clear_namespace(self.blame_buf, self.highlight_ns, 0, -1)
-  
+
   for _, hl in ipairs(highlights) do
     local col_start = hl.col_start
     local col_end = hl.col_end
-    
+
     -- Handle negative indices by converting to positive
     if col_start < 0 or col_end < 0 then
       local line_text = api.nvim_buf_get_lines(self.blame_buf, hl.line, hl.line + 1, false)[1] or ""
       local line_len = #line_text
-      
+
       if col_start < 0 then
         col_start = line_len + col_start + 1
       end
@@ -203,11 +204,11 @@ function Blamer:apply_highlights(highlights)
         col_end = line_len + col_end + 1
       end
     end
-    
+
     -- Ensure valid range
     col_start = math.max(0, col_start)
     col_end = math.max(col_start, col_end)
-    
+
     pcall(api.nvim_buf_add_highlight,
       self.blame_buf,
       self.highlight_ns,
@@ -234,19 +235,19 @@ function Blamer:update_hunk_highlight()
 
   -- Clear ALL highlights in the namespace first, then reapply base + bold
   api.nvim_buf_clear_namespace(self.blame_buf, self.highlight_ns, 0, -1)
-  
+
   self.last_highlighted_commit = entry.commit
-  
+
   -- First, reapply base highlights for all lines
-  local lines, highlights = self:render_blame_lines()
+  local _, highlights = self:render_blame_lines()
   for _, hl in ipairs(highlights) do
     local col_start = hl.col_start
     local col_end = hl.col_end
-    
+
     if col_start < 0 or col_end < 0 then
       local line_text = api.nvim_buf_get_lines(self.blame_buf, hl.line, hl.line + 1, false)[1] or ""
       local line_len = #line_text
-      
+
       if col_start < 0 then
         col_start = line_len + col_start + 1
       end
@@ -254,10 +255,10 @@ function Blamer:update_hunk_highlight()
         col_end = line_len + col_end + 1
       end
     end
-    
+
     col_start = math.max(0, col_start)
     col_end = math.max(col_start, col_end)
-    
+
     pcall(api.nvim_buf_add_highlight,
       self.blame_buf,
       self.highlight_ns,
@@ -267,7 +268,7 @@ function Blamer:update_hunk_highlight()
       col_end
     )
   end
-  
+
   -- Now apply bold highlights on top for the selected commit
   local hunks = ui.get_hunks(self.blame_entries)
   local line_nr = 1
@@ -276,20 +277,20 @@ function Blamer:update_hunk_highlight()
     if hunk.commit == entry.commit then
       local bold_color = ui.get_commit_color(self.commit_colors, hunk.commit, true)
       local commit_short = git.abbreviate_commit(hunk.commit)
-      
+
       for i = 1, hunk.line_count do
         local buf_line = line_nr + i - 2
-        
+
         if hunk.line_count == 1 then
           -- "- " is 2 bytes, then commit_short, then space, then author
           local commit_hl_end = #"- " + #commit_short
           api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, bold_color, buf_line, 0, commit_hl_end)
-          
+
           -- Bold the author name in the same color
           local author_start = #"- " + #commit_short + #" "
           local author_end = author_start + #hunk.author
           api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, bold_color, buf_line, author_start, author_end)
-          
+
           -- Bold the message part
           local prefix = string.format("- %s %s ", commit_short, hunk.author)
           local msg_start = #prefix
@@ -298,7 +299,7 @@ function Blamer:update_hunk_highlight()
           -- "┍ " is 4 bytes, then commit_short, then space, then author
           local commit_hl_end = #"┍ " + #commit_short
           api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, bold_color, buf_line, 0, commit_hl_end)
-          
+
           -- Bold the author name in the same color
           local author_start = #"┍ " + #commit_short + #" "
           local author_end = author_start + #hunk.author
@@ -357,7 +358,7 @@ function Blamer:setup_scroll_sync()
       if self.syncing then
         return
       end
-      
+
       local scrolled_win = tonumber(args.match)
       if not scrolled_win or not api.nvim_win_is_valid(scrolled_win) then
         return
@@ -389,7 +390,7 @@ function Blamer:setup_scroll_sync()
       if not api.nvim_win_is_valid(self.blame_win) or not api.nvim_buf_is_valid(self.blame_buf) then
         return
       end
-      
+
       local new_width = api.nvim_win_get_width(self.blame_win)
       if new_width ~= self.width then
         self.width = new_width
@@ -397,22 +398,22 @@ function Blamer:setup_scroll_sync()
       end
     end,
   })
-  
+
   self.augroup = augroup
 end
 
 ---Re-blame at a specific commit
----@param commit string|nil
+---@param commit_sha string|nil
 ---@param line number
 ---@return boolean success
-function Blamer:reblame(commit, line)
-  if commit and commit:match("^0+$") then
-    commit = nil
+function Blamer:reblame(commit_sha, line)
+  if commit_sha and commit_sha:match("^0+$") then
+    commit_sha = nil
   end
 
   local new_entries, err
-  if commit then
-    new_entries, err = git.blame_file(self.file_path, commit)
+  if commit_sha then
+    new_entries, err = git.blame_file(self.file_path, commit_sha)
   else
     -- Use buffer content only if buffer was originally modified
     if self.original_modified and api.nvim_buf_is_valid(self.view_buf) then
@@ -429,12 +430,12 @@ function Blamer:reblame(commit, line)
   end
 
   self.blame_entries = new_entries
-  self.current_commit = commit
+  self.current_commit = commit_sha
   self.commit_colors = {}
   self.next_color_index = 1
   self.last_highlighted_commit = nil
 
-  self:update_view_buffer(commit)
+  self:update_view_buffer(commit_sha)
 
   local lines, highlights = self:render_blame_lines()
   vim.bo[self.blame_buf].modifiable = true
@@ -451,15 +452,15 @@ function Blamer:reblame(commit, line)
 
   -- Only add to history if it's different from the current entry
   local current_entry = self.history_stack[self.history_index]
-  if not current_entry or current_entry.commit ~= commit then
+  if not current_entry or current_entry.commit ~= commit_sha then
     -- Trim history if we're not at the end
     if self.history_index < #self.history_stack then
       for i = #self.history_stack, self.history_index + 1, -1 do
         table.remove(self.history_stack, i)
       end
     end
-    
-    table.insert(self.history_stack, { commit = commit, line = line })
+
+    table.insert(self.history_stack, { commit = commit_sha, line = line })
     self.history_index = #self.history_stack
   end
 
@@ -487,9 +488,9 @@ function Blamer:refresh_blame_content()
 end
 
 ---Update view buffer content
----@param commit string|nil
-function Blamer:update_view_buffer(commit)
-  if not commit then
+---@param commit_sha string|nil
+function Blamer:update_view_buffer(commit_sha)
+  if not commit_sha then
     if self.temp_buf and api.nvim_win_is_valid(self.view_win) then
       api.nvim_win_set_buf(self.view_win, self.view_buf)
     end
@@ -505,7 +506,7 @@ function Blamer:update_view_buffer(commit)
     api.nvim_win_set_buf(self.view_win, self.temp_buf)
   end
 
-  local content, err = git.show_file(self.file_path, commit)
+  local content, err = git.show_file(self.file_path, commit_sha)
   if not content then
     content = { "Error: " .. (err or "Could not load file") }
   end
@@ -514,9 +515,9 @@ function Blamer:update_view_buffer(commit)
   api.nvim_buf_set_lines(self.temp_buf, 0, -1, false, content)
   vim.bo[self.temp_buf].modifiable = false
   vim.bo[self.temp_buf].filetype = vim.bo[self.view_buf].filetype
-  
+
   -- Set buffer name to show commit and file path (use full commit SHA)
-  local buf_name = string.format("%s:%s", commit, self.file_path)
+  local buf_name = string.format("%s:%s", commit_sha, self.file_path)
   pcall(api.nvim_buf_set_name, self.temp_buf, buf_name)
 end
 
@@ -546,17 +547,17 @@ function Blamer:go_back()
 
   self.history_index = self.history_index - 1
   local entry = self.history_stack[self.history_index]
-  
-  local new_entries, err
+
+  local new_entries
   if entry.commit then
-    new_entries, err = git.blame_file(self.file_path, entry.commit)
+    new_entries = git.blame_file(self.file_path, entry.commit)
   else
     -- Use buffer content only if buffer was originally modified
     if self.original_modified and api.nvim_buf_is_valid(self.view_buf) then
       local content = api.nvim_buf_get_lines(self.view_buf, 0, -1, false)
-      new_entries, err = git.blame_buffer(self.file_path, content)
+      new_entries = git.blame_buffer(self.file_path, content)
     else
-      new_entries, err = git.blame_file(self.file_path)
+      new_entries = git.blame_file(self.file_path)
     end
   end
 
@@ -565,13 +566,13 @@ function Blamer:go_back()
     self.commit_colors = {}
     self.next_color_index = 1
     self:update_view_buffer(entry.commit)
-    
+
     local lines, highlights = self:render_blame_lines()
     vim.bo[self.blame_buf].modifiable = true
     api.nvim_buf_set_lines(self.blame_buf, 0, -1, false, lines)
     vim.bo[self.blame_buf].modifiable = false
     self:apply_highlights(highlights)
-    
+
     pcall(api.nvim_win_set_cursor, self.blame_win, { entry.line, 0 })
   end
 end
@@ -585,17 +586,17 @@ function Blamer:go_forward()
 
   self.history_index = self.history_index + 1
   local entry = self.history_stack[self.history_index]
-  
-  local new_entries, err
+
+  local new_entries
   if entry.commit then
-    new_entries, err = git.blame_file(self.file_path, entry.commit)
+    new_entries = git.blame_file(self.file_path, entry.commit)
   else
     -- Use buffer content only if buffer was originally modified
     if self.original_modified and api.nvim_buf_is_valid(self.view_buf) then
       local content = api.nvim_buf_get_lines(self.view_buf, 0, -1, false)
-      new_entries, err = git.blame_buffer(self.file_path, content)
+      new_entries = git.blame_buffer(self.file_path, content)
     else
-      new_entries, err = git.blame_file(self.file_path)
+      new_entries = git.blame_file(self.file_path)
     end
   end
 
@@ -604,13 +605,13 @@ function Blamer:go_forward()
     self.commit_colors = {}
     self.next_color_index = 1
     self:update_view_buffer(entry.commit)
-    
+
     local lines, highlights = self:render_blame_lines()
     vim.bo[self.blame_buf].modifiable = true
     api.nvim_buf_set_lines(self.blame_buf, 0, -1, false, lines)
     vim.bo[self.blame_buf].modifiable = false
     self:apply_highlights(highlights)
-    
+
     pcall(api.nvim_win_set_cursor, self.blame_win, { entry.line, 0 })
   end
 end
@@ -630,7 +631,7 @@ function Blamer:open()
 
   vim.cmd("vsplit")
   vim.cmd("wincmd H")
-  
+
   self.blame_buf = api.nvim_create_buf(false, true)
   api.nvim_win_set_buf(0, self.blame_buf)
   self.blame_win = api.nvim_get_current_win()
@@ -639,7 +640,7 @@ function Blamer:open()
   vim.bo[self.blame_buf].bufhidden = "wipe"
   vim.bo[self.blame_buf].swapfile = false
   vim.bo[self.blame_buf].filetype = "blamer"
-  
+
   -- Set buffer name with unique identifier
   local buf_name = string.format("Blamer:%s", self.file_path)
   pcall(api.nvim_buf_set_name, self.blame_buf, buf_name)
@@ -680,7 +681,7 @@ function Blamer:setup_keymaps()
 
   vim.keymap.set("n", "q", function() self:close() end, opts)
   vim.keymap.set("n", "<Esc>", function() self:close() end, opts)
-  
+
   vim.keymap.set("n", "r", function()
     local line = api.nvim_win_get_cursor(self.blame_win)[1]
     local entry = self.blame_entries[line]
@@ -698,7 +699,7 @@ function Blamer:setup_keymaps()
   vim.keymap.set("n", "]", function() self:go_forward() end, opts)
   vim.keymap.set("n", "<C-o>", function() self:go_back() end, opts)
   vim.keymap.set("n", "<C-i>", function() self:go_forward() end, opts)
-  
+
   -- Show commit details
   vim.keymap.set("n", "s", function()
     local line = api.nvim_win_get_cursor(self.blame_win)[1]
@@ -711,14 +712,16 @@ function Blamer:setup_keymaps()
           if api.nvim_win_is_valid(win) then
             api.nvim_win_close(win, true)
           end
-          diff.open_diff(full_commit, self.file_path)
+          if full_commit then
+            diff.open_diff(full_commit, self.file_path)
+          end
         end, { buffer = buf, silent = true })
       end
     else
       vim.notify("Cannot show commit for uncommitted changes", vim.log.levels.INFO, { title = "Blamer" })
     end
   end, opts)
-  
+
   -- Show diff
   vim.keymap.set("n", "d", function()
     local line = api.nvim_win_get_cursor(self.blame_win)[1]
@@ -738,14 +741,14 @@ function Blamer:close()
     pcall(api.nvim_del_augroup_by_id, self.augroup)
     self.augroup = nil
   end
-  
+
   -- First, restore the original buffer in the view window if we're viewing a temp buffer
   if api.nvim_win_is_valid(self.view_win) then
     local current_buf = api.nvim_win_get_buf(self.view_win)
     if current_buf ~= self.view_buf and api.nvim_buf_is_valid(self.view_buf) then
       api.nvim_win_set_buf(self.view_win, self.view_buf)
     end
-    
+
     -- Switch to the view window before closing the blame window
     api.nvim_set_current_win(self.view_win)
   end
@@ -771,7 +774,7 @@ end
 
 ---Toggle blamer
 local function toggle()
-  if is_open() then
+  if is_open() and current_instance then
     current_instance:close()
   else
     local blamer = Blamer.new()
@@ -810,42 +813,42 @@ local function preload_blame(bufnr)
     if not api.nvim_buf_is_valid(bufnr) then
       return
     end
-    
+
     local file_path = api.nvim_buf_get_name(bufnr)
     if file_path == "" or not vim.bo[bufnr].modifiable then
       return
     end
-    
+
     local git_root = git.get_git_root()
     if not git_root then
       return
     end
-    
+
     if file_path:find(git_root, 1, true) == 1 then
       file_path = file_path:sub(#git_root + 2)
     else
       return
     end
-    
+
     -- Check if already cached
     local cached = cache.get_blame(file_path, nil)
     if cached then
       return
     end
-    
+
     -- Pre-load in background (non-blocking)
     vim.defer_fn(function()
       if not api.nvim_buf_is_valid(bufnr) then
         return
       end
-      
+
       -- Load blame for the entire file and cache it
       local has_modifications = vim.bo[bufnr].modified
       if has_modifications then
         -- Don't pre-load for modified buffers
         return
       end
-      
+
       git.blame_file(file_path)
       -- Result is automatically cached
     end, 100)  -- Small delay to not block initial file load
@@ -855,14 +858,14 @@ end
 ---Setup the plugin
 local function setup()
   ui.setup_highlights()
-  
+
   -- Pre-load blame when opening git-tracked files
   vim.api.nvim_create_autocmd({"BufReadPost", "BufNewFile"}, {
     callback = function(args)
       preload_blame(args.buf)
     end,
   })
-  
+
   -- Clear cache for file when it's written
   vim.api.nvim_create_autocmd("BufWritePost", {
     callback = function(args)
@@ -870,7 +873,7 @@ local function setup()
       if not git_root then
         return
       end
-      
+
       local file_path = vim.fn.expand("%:p")
       if file_path:find(git_root, 1, true) == 1 then
         file_path = file_path:sub(#git_root + 2)
@@ -882,7 +885,7 @@ local function setup()
       end
     end,
   })
-  
+
   vim.api.nvim_create_user_command("Blamer", toggle, {})
   vim.api.nvim_create_user_command("BlamerToggle", toggle, {})
   vim.api.nvim_create_user_command("BlamerCacheStats", cache_stats, {})
