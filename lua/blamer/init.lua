@@ -353,8 +353,10 @@ function Blamer:setup_scroll_sync()
       end
 
       if target_win and api.nvim_win_is_valid(target_win) then
-        local view = vim.fn.winsaveview()
-        api.nvim_win_call(scrolled_win, function()
+        local view = api.nvim_win_call(scrolled_win, function()
+          return vim.fn.winsaveview()
+        end)
+        api.nvim_win_call(target_win, function()
           vim.fn.winrestview(view)
         end)
       end
@@ -409,8 +411,19 @@ function Blamer:reblame(commit, line)
     end
   end, 10)
 
-  table.insert(self.history_stack, { commit = commit, line = line })
-  self.history_index = #self.history_stack
+  -- Only add to history if it's different from the current entry
+  local current_entry = self.history_stack[self.history_index]
+  if not current_entry or current_entry.commit ~= commit then
+    -- Trim history if we're not at the end
+    if self.history_index < #self.history_stack then
+      for i = #self.history_stack, self.history_index + 1, -1 do
+        table.remove(self.history_stack, i)
+      end
+    end
+    
+    table.insert(self.history_stack, { commit = commit, line = line })
+    self.history_index = #self.history_stack
+  end
 
   return true
 end
