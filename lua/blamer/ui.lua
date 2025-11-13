@@ -1,43 +1,14 @@
 -- UI rendering helpers
 local M = {}
 
-local COMMIT_COLORS = {
-  "BlamerCommit1",
-  "BlamerCommit2",
-  "BlamerCommit3",
-  "BlamerCommit4",
-  "BlamerCommit5",
-  "BlamerCommit6",
-  "BlamerCommit7",
-  "BlamerCommit8",
-  "BlamerCommit9",
-  "BlamerCommit10",
-  "BlamerCommit11",
-  "BlamerCommit12",
-  "BlamerCommit13",
-  "BlamerCommit14",
-  "BlamerCommit15",
-  "BlamerCommit16",
-}
+local NUM_COMMIT_COLORS = 16
+local COMMIT_COLORS = {}
+local COMMIT_COLORS_BOLD = {}
 
-local COMMIT_COLORS_BOLD = {
-  "BlamerCommit1Bold",
-  "BlamerCommit2Bold",
-  "BlamerCommit3Bold",
-  "BlamerCommit4Bold",
-  "BlamerCommit5Bold",
-  "BlamerCommit6Bold",
-  "BlamerCommit7Bold",
-  "BlamerCommit8Bold",
-  "BlamerCommit9Bold",
-  "BlamerCommit10Bold",
-  "BlamerCommit11Bold",
-  "BlamerCommit12Bold",
-  "BlamerCommit13Bold",
-  "BlamerCommit14Bold",
-  "BlamerCommit15Bold",
-  "BlamerCommit16Bold",
-}
+for i = 1, NUM_COMMIT_COLORS do
+  table.insert(COMMIT_COLORS, "BlamerCommit" .. i)
+  table.insert(COMMIT_COLORS_BOLD, "BlamerCommit" .. i .. "Bold")
+end
 
 ---Setup highlight groups
 function M.setup_highlights()

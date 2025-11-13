@@ -223,6 +223,51 @@ function Blamer:apply_highlights(highlights)
   end
 end
 
+---Apply highlights for a single hunk
+---@param hunk table
+---@param start_line number
+---@param is_bold boolean
+function Blamer:redraw_hunk(hunk, start_line, is_bold)
+  local color = ui.get_commit_color(self.commit_colors, hunk.commit, is_bold)
+  local commit_short = git.abbreviate_commit(hunk.commit)
+  local message_hl = is_bold and "BlamerMessageBold" or "BlamerMessage"
+
+  for i = 1, hunk.line_count do
+    local buf_line = start_line + i - 1
+
+    if hunk.line_count == 1 then
+      local commit_hl_end = #"- " + #commit_short
+      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, commit_hl_end)
+
+      if is_bold then
+        local author_start = #"- " + #commit_short + #" "
+        local author_end = author_start + #hunk.author
+        api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, author_start, author_end)
+      end
+
+      local prefix = string.format("- %s %s ", commit_short, hunk.author)
+      local msg_start = #prefix
+      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, message_hl, buf_line, msg_start, msg_start + #hunk.summary)
+    elseif i == 1 then
+      local commit_hl_end = #"┍ " + #commit_short
+      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, commit_hl_end)
+
+      if is_bold then
+        local author_start = #"┍ " + #commit_short + #" "
+        local author_end = author_start + #hunk.author
+        api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, author_start, author_end)
+      end
+    elseif i == 2 then
+      local symbol = (i == hunk.line_count) and "┕ " or "│ "
+      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, #symbol)
+      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, message_hl, buf_line, #symbol, #symbol + #hunk.summary)
+    else
+      local symbol = (i == hunk.line_count) and "┕" or "│"
+      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, #symbol)
+    end
+  end
+end
+
 ---Update hunk highlighting for current cursor position
 function Blamer:update_hunk_highlight()
   if not api.nvim_buf_is_valid(self.blame_buf) then
@@ -236,54 +281,19 @@ function Blamer:update_hunk_highlight()
     return
   end
 
-  api.nvim_buf_clear_namespace(self.blame_buf, self.highlight_ns, 0, -1)
-  self.last_highlighted_commit = entry.commit
+  local new_commit = entry.commit
+  local old_commit = self.last_highlighted_commit
+  self.last_highlighted_commit = new_commit
 
-  -- Reapply base highlights for all lines
-  local _, highlights = self:render_blame_lines()
-  for _, hl in ipairs(highlights) do
-    apply_single_highlight(self.blame_buf, self.highlight_ns, hl)
-  end
-
-  -- Apply bold highlights for the selected commit
   local hunks = ui.get_hunks(self.blame_entries)
   local line_nr = 1
 
   for _, hunk in ipairs(hunks) do
-    if hunk.commit == entry.commit then
-      local bold_color = ui.get_commit_color(self.commit_colors, hunk.commit, true)
-      local commit_short = git.abbreviate_commit(hunk.commit)
+    local is_old = hunk.commit == old_commit
+    local is_new = hunk.commit == new_commit
 
-      for i = 1, hunk.line_count do
-        local buf_line = line_nr + i - 2
-
-        if hunk.line_count == 1 then
-          local commit_hl_end = #"- " + #commit_short
-          api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, bold_color, buf_line, 0, commit_hl_end)
-
-          local author_start = #"- " + #commit_short + #" "
-          local author_end = author_start + #hunk.author
-          api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, bold_color, buf_line, author_start, author_end)
-
-          local prefix = string.format("- %s %s ", commit_short, hunk.author)
-          local msg_start = #prefix
-          api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, "BlamerMessageBold", buf_line, msg_start, msg_start + #hunk.summary)
-        elseif i == 1 then
-          local commit_hl_end = #"┍ " + #commit_short
-          api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, bold_color, buf_line, 0, commit_hl_end)
-
-          local author_start = #"┍ " + #commit_short + #" "
-          local author_end = author_start + #hunk.author
-          api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, bold_color, buf_line, author_start, author_end)
-        elseif i == 2 then
-          local symbol = (i == hunk.line_count) and "┕ " or "│ "
-          api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, bold_color, buf_line, 0, #symbol)
-          api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, "BlamerMessageBold", buf_line, #symbol, #symbol + #hunk.summary)
-        else
-          local symbol = (i == hunk.line_count) and "┕" or "│"
-          api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, bold_color, buf_line, 0, #symbol)
-        end
-      end
+    if is_old or is_new then
+      self:redraw_hunk(hunk, line_nr - 1, is_new)
     end
     line_nr = line_nr + hunk.line_count
   end
@@ -493,6 +503,8 @@ function Blamer:goto_parent(line)
     return
   end
 
+  -- Use the actual commit SHA from the blame entry, not self.current_commit
+  -- This ensures we get the resolved commit, not a reference like "abc^"
   local parent_commit = entry.commit .. "^"
   self:reblame(parent_commit, line)
 end
