@@ -13,86 +13,75 @@ local M = {}
 ---@field line_start number Starting line number in original file
 ---@field content string Line content
 
----Execute git command
+---Execute git command using vim.system (faster)
 ---@param args string[]
----@param input string|nil
+---@param opts table|nil Options: stdin (string), on_stdout (function)
 ---@return table result {stdout: string[], stderr: string[], code: number}
-local function git_exec(args, input)
-  local stdout_data = {}
-  local stderr_data = {}
-  local job_completed = false
+local function git_exec(args, opts)
+  opts = opts or {}
   
-  local cmd = vim.list_extend({ "git" }, args)
-  local job_opts = {
-    stdout_buffered = true,
-    stderr_buffered = true,
-    on_stdout = function(_, data)
-      if data then
-        vim.list_extend(stdout_data, data)
-      end
-    end,
-    on_stderr = function(_, data)
-      if data then
-        vim.list_extend(stderr_data, data)
-      end
-    end,
-    on_exit = function()
-      job_completed = true
-    end,
+  -- Build command with optimized git flags
+  local cmd = {
+    "git",
+    "--no-pager",
+    "--no-optional-locks",
+    "--literal-pathspecs",
+    "-c", "gc.auto=0",
+  }
+  vim.list_extend(cmd, args)
+  
+  local system_opts = {
+    text = true,
   }
   
-  if input then
-    job_opts.stdin = "pipe"
+  if opts.stdin then
+    system_opts.stdin = opts.stdin
   end
   
-  local job_id = vim.fn.jobstart(cmd, job_opts)
-  
-  if job_id <= 0 then
-    return {
-      stdout = {},
-      stderr = { "Failed to start git command" },
-      code = -1,
-    }
+  -- If streaming callback provided, use it
+  if opts.on_stdout then
+    system_opts.stdout = opts.on_stdout
   end
   
-  -- Write input to stdin if provided
-  if input then
-    vim.fn.chansend(job_id, input)
-    vim.fn.chanclose(job_id, "stdin")
+  local obj = vim.system(cmd, system_opts):wait()
+  
+  -- Split stdout into lines
+  local stdout_lines = {}
+  if obj.stdout and obj.stdout ~= "" then
+    stdout_lines = vim.split(obj.stdout, "\n")
+    -- Remove empty last line if stdout ends with newline
+    if stdout_lines[#stdout_lines] == "" then
+      stdout_lines[#stdout_lines] = nil
+    end
   end
   
-  local exit_code = vim.fn.jobwait({ job_id }, 30000)[1]
-  
-  -- Handle timeout
-  if exit_code == -1 then
-    vim.fn.jobstop(job_id)
-    return {
-      stdout = {},
-      stderr = { "Git command timed out" },
-      code = -1,
-    }
+  -- Split stderr into lines
+  local stderr_lines = {}
+  if obj.stderr and obj.stderr ~= "" then
+    stderr_lines = vim.split(obj.stderr, "\n")
   end
   
   return {
-    stdout = stdout_data,
-    stderr = stderr_data,
-    code = exit_code,
+    stdout = stdout_lines,
+    stderr = stderr_lines,
+    code = obj.code,
   }
 end
 
----Parse git blame porcelain output
+---Parse git blame porcelain output (supports both regular and incremental modes)
 ---@param output string[] Lines from git blame --porcelain
 ---@return BlameEntry[]
 function M.parse_blame_porcelain(output)
-  local entries = {}
+  local entries_map = {}  -- Store entries by final line number
   local commit_info = {}
   local i = 1
 
   while i <= #output do
     local line = output[i]
-    local commit, orig_line, final_line = line:match("^([a-f0-9]+) (%d+) (%d+)")
+    local commit, orig_line, final_line, num_lines = line:match("^([a-f0-9]+) (%d+) (%d+) ?(%d*)")
     
     if commit then
+      -- Initialize commit info if not seen before
       if not commit_info[commit] then
         commit_info[commit] = {
           commit = commit,
@@ -105,74 +94,113 @@ function M.parse_blame_porcelain(output)
         }
       end
 
-      local entry = {
-        commit = commit,
-        line_start = tonumber(orig_line),
-        content = "",
-        author = commit_info[commit].author,
-        author_time = commit_info[commit].author_time,
-        author_tz = commit_info[commit].author_tz,
-        summary = commit_info[commit].summary,
-        filename = commit_info[commit].filename,
-        previous = commit_info[commit].previous,
-      }
+      local info = commit_info[commit]
+      local orig_line_num = tonumber(orig_line)
+      local final_line_num = tonumber(final_line)
+      local line_count = tonumber(num_lines) or 1
 
-      local j = i + 1
-      while j <= #output and not output[j]:match("^[a-f0-9]+ %d+ %d+") and not output[j]:match("^\t") do
-        local metadata_line = output[j]
+      -- Parse metadata lines until we hit filename (which ends the header)
+      i = i + 1
+      local found_filename = false
+      while i <= #output and not found_filename do
+        local metadata_line = output[i]
+        
+        -- A new commit line starts
+        if metadata_line:match("^[a-f0-9]+ %d+ %d+") then
+          break
+        end
 
         local author = metadata_line:match("^author (.+)")
         if author then
-          commit_info[commit].author = author
-          entry.author = author
+          info.author = author
+          i = i + 1
+          goto continue
         end
 
         local author_time = metadata_line:match("^author%-time (%d+)")
         if author_time then
-          commit_info[commit].author_time = tonumber(author_time)
-          entry.author_time = tonumber(author_time)
+          info.author_time = tonumber(author_time)
+          i = i + 1
+          goto continue
         end
 
         local author_tz = metadata_line:match("^author%-tz (.+)")
         if author_tz then
-          commit_info[commit].author_tz = author_tz
-          entry.author_tz = author_tz
+          info.author_tz = author_tz
+          i = i + 1
+          goto continue
         end
 
         local summary = metadata_line:match("^summary (.+)")
         if summary then
-          commit_info[commit].summary = summary
-          entry.summary = summary
+          info.summary = summary
+          i = i + 1
+          goto continue
         end
 
         local previous = metadata_line:match("^previous ([a-f0-9]+)")
         if previous then
-          commit_info[commit].previous = previous
-          entry.previous = previous
+          info.previous = previous
+          i = i + 1
+          goto continue
         end
 
         local filename = metadata_line:match("^filename (.+)")
         if filename then
-          commit_info[commit].filename = filename
-          entry.filename = filename
+          info.filename = filename
+          found_filename = true
+          i = i + 1
+          break
         end
-
-        j = j + 1
+        
+        -- Skip other metadata we don't care about (committer, boundary, etc.)
+        i = i + 1
+        ::continue::
       end
 
-      while j <= #output and not output[j]:match("^\t") do
-        j = j + 1
+      -- Create entries for each line in this hunk
+      -- Store by final line number to handle incremental mode's non-sequential output
+      for j = 0, line_count - 1 do
+        local entry = {
+          commit = commit,
+          line_start = orig_line_num + j,
+          content = "",
+          author = info.author,
+          author_time = info.author_time,
+          author_tz = info.author_tz,
+          summary = info.summary,
+          filename = info.filename,
+          previous = info.previous,
+        }
+        
+        entries_map[final_line_num + j] = entry
       end
-
-      if j <= #output and output[j]:match("^\t") then
-        entry.content = output[j]:sub(2)
-        j = j + 1
+      
+      -- Skip the content line if present (starts with tab)
+      -- In incremental mode, content lines are omitted
+      if i <= #output and output[i]:match("^\t") then
+        if entries_map[final_line_num] then
+          entries_map[final_line_num].content = output[i]:sub(2)
+        end
+        i = i + 1
       end
-
-      table.insert(entries, entry)
-      i = j
     else
       i = i + 1
+    end
+  end
+
+  -- Convert map to array sorted by line number
+  local entries = {}
+  local max_line = 0
+  for line_num, _ in pairs(entries_map) do
+    if line_num > max_line then
+      max_line = line_num
+    end
+  end
+  
+  for line_num = 1, max_line do
+    if entries_map[line_num] then
+      table.insert(entries, entries_map[line_num])
     end
   end
 
@@ -190,7 +218,7 @@ function M.blame_file(file, commit)
     return cached
   end
 
-  local args = { "blame", "--porcelain" }
+  local args = { "blame", "--incremental", "--porcelain" }
   if commit then
     table.insert(args, commit)
   end
@@ -220,10 +248,10 @@ end
 ---@param content string[] Buffer content
 ---@return BlameEntry[]|nil, string|nil err
 function M.blame_buffer(file, content)
-  local args = { "blame", "--porcelain", "--contents", "-", "--", file }
+  local args = { "blame", "--incremental", "--porcelain", "--contents", "-", "--", file }
   local input = table.concat(content, "\n") .. "\n"
   
-  local result = git_exec(args, input)
+  local result = git_exec(args, { stdin = input })
 
   if result.code ~= 0 then
     local err_msg = "Git blame with buffer contents failed"
@@ -247,6 +275,7 @@ function M.show_file(file, commit)
     return cached
   end
 
+  -- show command doesn't need the extra flags, just use minimal args
   local args = { "show", commit .. ":" .. file }
   local result = git_exec(args)
 
