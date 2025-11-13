@@ -46,30 +46,13 @@ function Blamer.new(file_path)
   end
 
   local current_buf = vim.fn.bufnr("%")
-  local blame_entries, err
   local has_modifications = api.nvim_buf_is_valid(current_buf) and vim.bo[current_buf].modified
 
-  -- Use buffer content only for unsaved changes, otherwise use file (which is cached)
-  if has_modifications then
-    local content = api.nvim_buf_get_lines(current_buf, 0, -1, false)
-    blame_entries, err = git.blame_buffer(file_path, content)
-  else
-    blame_entries, err = git.blame_file(file_path)
-  end
-
-  if not blame_entries then
-    vim.notify("Git blame failed: " .. (err or "Unknown error"), vim.log.levels.ERROR, { title = "Blamer" })
-    return nil
-  end
-
-  if #blame_entries == 0 then
-    vim.notify("No blame information found", vim.log.levels.INFO, { title = "Blamer" })
-    return nil
-  end
-
+  -- Don't load blame yet - we'll load viewport on demand
   local self = setmetatable({
     file_path = file_path,
-    blame_entries = blame_entries,
+    blame_entries = {},  -- Will be loaded on-demand
+    blame_cache = {},     -- Cache blame entries by line number
     commit_colors = {},
     next_color_index = 1,
     width = 60,
@@ -80,9 +63,69 @@ function Blamer.new(file_path)
     view_buf = current_buf,
     original_modified = has_modifications,
     syncing = false,
+    current_commit = nil,  -- Track which commit we're viewing
   }, Blamer)
 
   return self
+end
+
+---Load blame for a line range (viewport optimization)
+---@param start_line number Starting line (1-indexed)
+---@param end_line number Ending line
+function Blamer:load_blame_range(start_line, end_line)
+  local blame_entries, err
+  
+  if self.original_modified and api.nvim_buf_is_valid(self.view_buf) then
+    -- For modified buffers, always load full blame
+    local content = api.nvim_buf_get_lines(self.view_buf, 0, -1, false)
+    blame_entries, err = git.blame_buffer(self.file_path, content)
+  else
+    -- Use viewport optimization for unchanged files
+    blame_entries, err = git.blame_file(self.file_path, self.current_commit, start_line, end_line)
+  end
+  
+  if not blame_entries then
+    return false, err
+  end
+  
+  -- Cache the loaded entries
+  for _, entry in ipairs(blame_entries) do
+    -- The entry line_start is the original line, but we need the final line number
+    -- For viewport blaming, entries are returned in order starting from start_line
+    local idx = #self.blame_entries + 1
+    self.blame_entries[idx] = entry
+    self.blame_cache[start_line + idx - 1] = entry
+  end
+  
+  return true
+end
+
+---Ensure blame is loaded for the entire file
+function Blamer:ensure_full_blame()
+  if #self.blame_entries > 0 then
+    return true  -- Already loaded
+  end
+  
+  local blame_entries, err
+  
+  if self.original_modified and api.nvim_buf_is_valid(self.view_buf) then
+    local content = api.nvim_buf_get_lines(self.view_buf, 0, -1, false)
+    blame_entries, err = git.blame_buffer(self.file_path, content)
+  else
+    blame_entries, err = git.blame_file(self.file_path, self.current_commit)
+  end
+  
+  if not blame_entries then
+    vim.notify("Git blame failed: " .. (err or "Unknown error"), vim.log.levels.ERROR, { title = "Blamer" })
+    return false
+  end
+  
+  self.blame_entries = blame_entries
+  for i, entry in ipairs(blame_entries) do
+    self.blame_cache[i] = entry
+  end
+  
+  return true
 end
 
 ---Render blame lines
@@ -311,6 +354,9 @@ end
 
 ---Setup scroll synchronization
 function Blamer:setup_scroll_sync()
+  -- Store autocmd IDs for cleanup
+  self.autocmds = self.autocmds or {}
+  
   local function sync_cursor(from_win, to_win)
     if self.syncing or not api.nvim_win_is_valid(to_win) then
       return
@@ -321,15 +367,35 @@ function Blamer:setup_scroll_sync()
     self.syncing = false
   end
 
+  local augroup = api.nvim_create_augroup("Blamer_" .. self.blame_buf, { clear = true })
+
   api.nvim_create_autocmd("CursorMoved", {
+    group = augroup,
     buffer = self.blame_buf,
     callback = function()
+      if not api.nvim_buf_is_valid(self.blame_buf) then
+        return
+      end
       sync_cursor(self.blame_win, self.view_win)
       self:update_hunk_highlight()
+      -- Lazy load blame for newly visible lines
+      vim.defer_fn(function()
+        if not api.nvim_buf_is_valid(self.blame_buf) then
+          return
+        end
+        if self:load_visible_blame() then
+          local lines, highlights = self:render_blame_lines()
+          vim.bo[self.blame_buf].modifiable = true
+          api.nvim_buf_set_lines(self.blame_buf, 0, -1, false, lines)
+          vim.bo[self.blame_buf].modifiable = false
+          self:apply_highlights(highlights)
+        end
+      end, 50)
     end,
   })
 
   api.nvim_create_autocmd("CursorMoved", {
+    group = augroup,
     buffer = self.view_buf,
     callback = function()
       sync_cursor(self.view_win, self.blame_win)
@@ -337,6 +403,7 @@ function Blamer:setup_scroll_sync()
   })
 
   api.nvim_create_autocmd("WinScrolled", {
+    group = augroup,
     callback = function(args)
       if self.syncing then
         return
@@ -362,10 +429,26 @@ function Blamer:setup_scroll_sync()
         api.nvim_win_call(target_win, function()
           vim.fn.winrestview(view)
         end)
+        
+        -- Lazy load blame for newly visible lines
+        vim.defer_fn(function()
+          if not api.nvim_buf_is_valid(self.blame_buf) then
+            return
+          end
+          if self:load_visible_blame() then
+            local lines, highlights = self:render_blame_lines()
+            vim.bo[self.blame_buf].modifiable = true
+            api.nvim_buf_set_lines(self.blame_buf, 0, -1, false, lines)
+            vim.bo[self.blame_buf].modifiable = false
+            self:apply_highlights(highlights)
+          end
+        end, 50)
       end
       self.syncing = false
     end,
   })
+  
+  self.augroup = augroup
 end
 
 ---Re-blame at a specific commit
@@ -396,6 +479,11 @@ function Blamer:reblame(commit, line)
   end
 
   self.blame_entries = new_entries
+  self.blame_cache = {}
+  for i, entry in ipairs(new_entries) do
+    self.blame_cache[i] = entry
+  end
+  self.current_commit = commit
   self.commit_colors = {}
   self.next_color_index = 1
   self.last_highlighted_commit = nil
@@ -561,12 +649,106 @@ function Blamer:go_forward()
   end
 end
 
+---Get the visible line range in the view window
+---@return number start_line, number end_line
+function Blamer:get_visible_range()
+  if not api.nvim_win_is_valid(self.view_win) then
+    return 1, 100
+  end
+  
+  local view_info = vim.fn.winsaveview()
+  local height = api.nvim_win_get_height(self.view_win)
+  local topline = view_info.topline
+  local botline = topline + height
+  
+  -- Add some padding for smooth scrolling
+  local padding = math.floor(height * 0.5)
+  local start_line = math.max(1, topline - padding)
+  local total_lines = api.nvim_buf_line_count(self.view_buf)
+  local end_line = math.min(total_lines, botline + padding)
+  
+  return start_line, end_line
+end
+
+---Load blame for visible viewport with lazy expansion
+---@return boolean success
+function Blamer:load_visible_blame()
+  local start_line, end_line = self:get_visible_range()
+  
+  -- Check if we need to load more
+  local need_load = false
+  for i = start_line, end_line do
+    if not self.blame_cache[i] then
+      need_load = true
+      break
+    end
+  end
+  
+  if not need_load then
+    return true  -- Already have everything we need
+  end
+  
+  -- Find the actual range we need to load (expand to cover gaps)
+  local load_start = start_line
+  local load_end = end_line
+  
+  while load_start > 1 and not self.blame_cache[load_start] do
+    load_start = load_start - 1
+  end
+  while load_end < api.nvim_buf_line_count(self.view_buf) and not self.blame_cache[load_end] do
+    load_end = load_end + 1
+  end
+  
+  local blame_entries, err
+  
+  if self.original_modified and api.nvim_buf_is_valid(self.view_buf) then
+    -- For modified buffers, always load full blame once
+    local content = api.nvim_buf_get_lines(self.view_buf, 0, -1, false)
+    blame_entries, err = git.blame_buffer(self.file_path, content)
+    if blame_entries then
+      self.blame_entries = blame_entries
+      for i, entry in ipairs(blame_entries) do
+        self.blame_cache[i] = entry
+      end
+    end
+  else
+    -- Load just the visible range
+    blame_entries, err = git.blame_file(self.file_path, self.current_commit, load_start, load_end)
+    if blame_entries then
+      -- Merge with existing entries
+      for i, entry in ipairs(blame_entries) do
+        local line_num = load_start + i - 1
+        self.blame_cache[line_num] = entry
+      end
+      -- Rebuild full entries array from cache
+      self.blame_entries = {}
+      for i = 1, api.nvim_buf_line_count(self.view_buf) do
+        if self.blame_cache[i] then
+          self.blame_entries[i] = self.blame_cache[i]
+        end
+      end
+    end
+  end
+  
+  if not blame_entries then
+    vim.notify("Git blame failed: " .. (err or "Unknown error"), vim.log.levels.ERROR, { title = "Blamer" })
+    return false
+  end
+  
+  return true
+end
+
 ---Open the blame split
 function Blamer:open()
   current_instance = self
 
   self.view_win = api.nvim_get_current_win()
   local initial_line = api.nvim_win_get_cursor(self.view_win)[1]
+
+  -- Load only visible blame initially (fast!)
+  if not self:load_visible_blame() then
+    return
+  end
 
   vim.cmd("vsplit")
   vim.cmd("wincmd H")
@@ -669,6 +851,12 @@ end
 
 ---Close the blame split
 function Blamer:close()
+  -- Clean up autocmds
+  if self.augroup then
+    pcall(api.nvim_del_augroup_by_id, self.augroup)
+    self.augroup = nil
+  end
+  
   -- First, restore the original buffer in the view window if we're viewing a temp buffer
   if api.nvim_win_is_valid(self.view_win) then
     local current_buf = api.nvim_win_get_buf(self.view_win)
