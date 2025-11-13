@@ -621,6 +621,7 @@ function Blamer:open()
 
   self.view_win = api.nvim_get_current_win()
   local initial_line = api.nvim_win_get_cursor(self.view_win)[1]
+  local initial_view = vim.fn.winsaveview()
 
   -- Try to load from cache first, or load full blame
   if not self:ensure_full_blame() then
@@ -662,8 +663,12 @@ function Blamer:open()
   self.history_index = 1
 
   vim.defer_fn(function()
-    if api.nvim_win_is_valid(self.blame_win) then
+    if api.nvim_win_is_valid(self.blame_win) and api.nvim_win_is_valid(self.view_win) then
       pcall(api.nvim_win_set_cursor, self.blame_win, { initial_line, 0 })
+      pcall(vim.fn.winrestview, initial_view)
+      api.nvim_win_call(self.blame_win, function()
+        vim.fn.winrestview(initial_view)
+      end)
       self:update_hunk_highlight()
     end
   end, 10)
