@@ -20,6 +20,7 @@ local M = {}
 local function git_exec(args, input)
   local stdout_data = {}
   local stderr_data = {}
+  local job_completed = false
   
   local cmd = vim.list_extend({ "git" }, args)
   local job_opts = {
@@ -35,14 +36,42 @@ local function git_exec(args, input)
         vim.list_extend(stderr_data, data)
       end
     end,
+    on_exit = function()
+      job_completed = true
+    end,
   }
   
   if input then
-    job_opts.input = input
+    job_opts.stdin = "pipe"
   end
   
   local job_id = vim.fn.jobstart(cmd, job_opts)
+  
+  if job_id <= 0 then
+    return {
+      stdout = {},
+      stderr = { "Failed to start git command" },
+      code = -1,
+    }
+  end
+  
+  -- Write input to stdin if provided
+  if input then
+    vim.fn.chansend(job_id, input)
+    vim.fn.chanclose(job_id, "stdin")
+  end
+  
   local exit_code = vim.fn.jobwait({ job_id }, 30000)[1]
+  
+  -- Handle timeout
+  if exit_code == -1 then
+    vim.fn.jobstop(job_id)
+    return {
+      stdout = {},
+      stderr = { "Git command timed out" },
+      code = -1,
+    }
+  end
   
   return {
     stdout = stdout_data,

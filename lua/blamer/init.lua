@@ -47,8 +47,10 @@ function Blamer.new(file_path)
 
   local current_buf = vim.fn.bufnr("%")
   local blame_entries, err
+  local has_modifications = api.nvim_buf_is_valid(current_buf) and vim.bo[current_buf].modified
 
-  if api.nvim_buf_is_valid(current_buf) and vim.bo[current_buf].modified then
+  -- Use buffer content only for unsaved changes, otherwise use file (which is cached)
+  if has_modifications then
     local content = api.nvim_buf_get_lines(current_buf, 0, -1, false)
     blame_entries, err = git.blame_buffer(file_path, content)
   else
@@ -76,7 +78,7 @@ function Blamer.new(file_path)
     history_stack = {},
     history_index = 0,
     view_buf = current_buf,
-    original_modified = vim.bo[current_buf].modified,
+    original_modified = has_modifications,
     syncing = false,
   }, Blamer)
 
@@ -379,7 +381,8 @@ function Blamer:reblame(commit, line)
   if commit then
     new_entries, err = git.blame_file(self.file_path, commit)
   else
-    if self.original_modified then
+    -- Use buffer content only if buffer was originally modified
+    if self.original_modified and api.nvim_buf_is_valid(self.view_buf) then
       local content = api.nvim_buf_get_lines(self.view_buf, 0, -1, false)
       new_entries, err = git.blame_buffer(self.file_path, content)
     else
@@ -494,7 +497,13 @@ function Blamer:go_back()
   if entry.commit then
     new_entries, err = git.blame_file(self.file_path, entry.commit)
   else
-    new_entries, err = git.blame_file(self.file_path)
+    -- Use buffer content only if buffer was originally modified
+    if self.original_modified and api.nvim_buf_is_valid(self.view_buf) then
+      local content = api.nvim_buf_get_lines(self.view_buf, 0, -1, false)
+      new_entries, err = git.blame_buffer(self.file_path, content)
+    else
+      new_entries, err = git.blame_file(self.file_path)
+    end
   end
 
   if new_entries then
@@ -527,7 +536,13 @@ function Blamer:go_forward()
   if entry.commit then
     new_entries, err = git.blame_file(self.file_path, entry.commit)
   else
-    new_entries, err = git.blame_file(self.file_path)
+    -- Use buffer content only if buffer was originally modified
+    if self.original_modified and api.nvim_buf_is_valid(self.view_buf) then
+      local content = api.nvim_buf_get_lines(self.view_buf, 0, -1, false)
+      new_entries, err = git.blame_buffer(self.file_path, content)
+    else
+      new_entries, err = git.blame_file(self.file_path)
+    end
   end
 
   if new_entries then
@@ -721,6 +736,22 @@ end
 ---Setup the plugin
 local function setup()
   ui.setup_highlights()
+  
+  -- Clear cache for file when it's written
+  vim.api.nvim_create_autocmd("BufWritePost", {
+    callback = function(args)
+      local git_root = git.get_git_root()
+      if not git_root then
+        return
+      end
+      
+      local file_path = vim.fn.expand("%:p")
+      if file_path:find(git_root, 1, true) == 1 then
+        file_path = file_path:sub(#git_root + 2)
+        cache.clear_file(file_path)
+      end
+    end,
+  })
   
   vim.api.nvim_create_user_command("Blamer", toggle, {})
   vim.api.nvim_create_user_command("BlamerToggle", toggle, {})
