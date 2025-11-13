@@ -135,7 +135,7 @@ function M.clear_file(file_path)
       end
     end
   end
-  
+
   -- Clear file cache entries for this file
   for key, _ in pairs(file_cache) do
     if key:match("^" .. vim.pesc(file_path) .. ":") then
