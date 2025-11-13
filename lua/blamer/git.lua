@@ -20,42 +20,29 @@ local M = {}
 local function git_exec(args, opts)
   opts = opts or {}
 
-  -- Build command with optimized git flags
-  local cmd = {
-    "git",
-    "--no-pager",
-    "--no-optional-locks",
-    "--literal-pathspecs",
-    "-c", "gc.auto=0",
-  }
+  local cmd = { "git", "--no-pager" }
   vim.list_extend(cmd, args)
 
-  local system_opts = {
-    text = true,
-  }
+  local system_opts = { text = true }
 
   if opts.stdin then
     system_opts.stdin = opts.stdin
   end
 
-  -- If streaming callback provided, use it
   if opts.on_stdout then
     system_opts.stdout = opts.on_stdout
   end
 
   local obj = vim.system(cmd, system_opts):wait()
 
-  -- Split stdout into lines
   local stdout_lines = {}
   if obj.stdout and obj.stdout ~= "" then
     stdout_lines = vim.split(obj.stdout, "\n")
-    -- Remove empty last line if stdout ends with newline
     if stdout_lines[#stdout_lines] == "" then
       stdout_lines[#stdout_lines] = nil
     end
   end
 
-  -- Split stderr into lines
   local stderr_lines = {}
   if obj.stderr and obj.stderr ~= "" then
     stderr_lines = vim.split(obj.stderr, "\n")
@@ -270,13 +257,11 @@ end
 ---@param commit string Commit hash
 ---@return string[]|nil, string|nil err
 function M.show_file(file, commit)
-  -- Check cache first
   local cached = cache.get_file(file, commit)
   if cached then
     return cached
   end
 
-  -- show command doesn't need the extra flags, just use minimal args
   local args = { "show", commit .. ":" .. file }
   local result = git_exec(args)
 
@@ -288,12 +273,8 @@ function M.show_file(file, commit)
     return nil, err_msg
   end
 
-  local content = result.stdout
-
-  -- Cache the result
-  cache.set_file(file, commit, content)
-
-  return content
+  cache.set_file(file, commit, result.stdout)
+  return result.stdout
 end
 
 ---Format a timestamp as a date string
