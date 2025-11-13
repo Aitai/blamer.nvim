@@ -78,15 +78,12 @@ end
 ---@param commit string
 ---@return number buf, number win
 function M.create_commit_view(commit)
-  local result = git.git_exec({ "show", "--format=fuller", "--stat", commit })
+  local result = git.git_exec({ "show", "--format=fuller", commit })
   
   if result.code ~= 0 then
     vim.notify("Failed to show commit", vim.log.levels.ERROR, { title = "Blamer" })
     return nil, nil
   end
-  
-  local commit_info = parse_commit_info(result.stdout)
-  local diff_stats = parse_diff_stats(result.stdout)
   
   -- Create buffer
   local buf = api.nvim_create_buf(false, true)
@@ -95,38 +92,22 @@ function M.create_commit_view(commit)
   vim.bo[buf].swapfile = false
   vim.bo[buf].filetype = "git"
   
-  -- Build content
-  local lines = {}
-  table.insert(lines, "commit " .. commit_info.oid)
-  table.insert(lines, "Author:     " .. commit_info.author .. " <" .. commit_info.author_email .. ">")
-  table.insert(lines, "AuthorDate: " .. commit_info.author_date)
-  table.insert(lines, "Commit:     " .. commit_info.committer .. " <" .. commit_info.committer_email .. ">")
-  table.insert(lines, "CommitDate: " .. commit_info.committer_date)
+  -- Use the full output from git show which includes both commit info and diff
+  local lines = result.stdout
+  
+  -- Add instruction at the end
   table.insert(lines, "")
+  table.insert(lines, "Press q to close, d to view diff in separate view")
   
-  for _, msg_line in ipairs(commit_info.message) do
-    table.insert(lines, msg_line)
-  end
-  
-  if #diff_stats > 0 then
-    table.insert(lines, "")
-    table.insert(lines, "Files changed:")
-    table.insert(lines, "")
-    for _, file in ipairs(diff_stats) do
-      local stat_line = string.format("  %s | %s", file.path, file.changes)
-      table.insert(lines, stat_line)
-    end
-  end
-  
-  table.insert(lines, "")
-  table.insert(lines, "Press q to close, d to view diff")
+  -- Parse commit info to get the full OID for the window title
+  local commit_info = parse_commit_info(result.stdout)
   
   api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
   
-  -- Create floating window
-  local width = math.min(100, vim.o.columns - 4)
-  local height = math.min(math.max(20, #lines + 2), vim.o.lines - 4)
+  -- Create floating window - make it larger to accommodate the diff
+  local width = math.min(120, vim.o.columns - 4)
+  local height = math.min(vim.o.lines - 4, #lines + 2)
   
   local win = api.nvim_open_win(buf, true, {
     relative = "editor",
