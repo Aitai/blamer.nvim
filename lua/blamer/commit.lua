@@ -74,7 +74,7 @@ local function parse_diff_stats(lines)
   return files
 end
 
----Create commit view buffer
+---Create commit view buffer in a new tab
 ---@param commit string
 ---@return number buf, number win
 function M.create_commit_view(commit)
@@ -95,43 +95,28 @@ function M.create_commit_view(commit)
   -- Use the full output from git show which includes both commit info and diff
   local lines = result.stdout
   
-  -- Add instruction at the end
-  table.insert(lines, "")
-  table.insert(lines, "Press q to close, d to view diff in separate view")
-  
-  -- Parse commit info to get the full OID for the window title
+  -- Parse commit info to get the full OID
   local commit_info = parse_commit_info(result.stdout)
   
   api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
   
-  -- Create floating window - make it larger to accommodate the diff
-  local width = math.min(120, vim.o.columns - 4)
-  local height = math.min(vim.o.lines - 4, #lines + 2)
+  -- Open in a new tab
+  vim.cmd("tabnew")
+  local win = api.nvim_get_current_win()
+  api.nvim_win_set_buf(win, buf)
   
-  local win = api.nvim_open_win(buf, true, {
-    relative = "editor",
-    width = width,
-    height = height,
-    col = math.floor((vim.o.columns - width) / 2),
-    row = math.floor((vim.o.lines - height) / 2),
-    style = "minimal",
-    border = "rounded",
-    title = " Commit " .. git.abbreviate_commit(commit_info.oid) .. " ",
-    title_pos = "center",
-  })
+  -- Set buffer name
+  local commit_short = git.abbreviate_commit(commit_info.oid)
+  pcall(api.nvim_buf_set_name, buf, string.format("commit:%s", commit_short))
   
   -- Set up keymaps
   vim.keymap.set("n", "q", function()
-    if api.nvim_win_is_valid(win) then
-      api.nvim_win_close(win, true)
-    end
+    vim.cmd("tabclose")
   end, { buffer = buf, silent = true })
   
   vim.keymap.set("n", "<Esc>", function()
-    if api.nvim_win_is_valid(win) then
-      api.nvim_win_close(win, true)
-    end
+    vim.cmd("tabclose")
   end, { buffer = buf, silent = true })
   
   return buf, win, commit_info.oid
