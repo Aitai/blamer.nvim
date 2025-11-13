@@ -20,23 +20,13 @@ A focused Neovim plugin for git blame functionality with split view and interact
 ### Using [lazy.nvim](https://github.com/folke/lazy.nvim)
 
 ```lua
-{
-  "Aitai/blamer.nvim",
-  config = function()
-    require("blamer").setup()
-  end
-}
+"Aitai/blamer.nvim"
 ```
 
 ### Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
 
 ```lua
-use {
-  'Aitai/blamer.nvim',
-  config = function()
-    require("blamer").setup()
-  end
-}
+use 'Aitai/blamer.nvim'
 ```
 
 ## Usage
@@ -80,5 +70,3 @@ This makes:
 - **Re-blaming at commits instant** - Once loaded, commit views are cached
 
 The cache automatically manages memory by evicting least recently used entries (default: 50 blame results, 100 file contents).
-
-
