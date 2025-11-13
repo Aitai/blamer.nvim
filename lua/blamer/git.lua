@@ -1,4 +1,5 @@
 -- Git blame functionality
+local cache = require("blamer.cache")
 local M = {}
 
 ---@class BlameEntry
@@ -154,6 +155,12 @@ end
 ---@param commit string|nil Commit to blame from (defaults to working tree)
 ---@return BlameEntry[]|nil, string|nil err
 function M.blame_file(file, commit)
+  -- Check cache first
+  local cached = cache.get_blame(file, commit)
+  if cached then
+    return cached
+  end
+
   local args = { "blame", "--porcelain" }
   if commit then
     table.insert(args, commit)
@@ -171,7 +178,12 @@ function M.blame_file(file, commit)
     return nil, err_msg
   end
 
-  return M.parse_blame_porcelain(result.stdout)
+  local entries = M.parse_blame_porcelain(result.stdout)
+  
+  -- Cache the result
+  cache.set_blame(file, commit, entries)
+  
+  return entries
 end
 
 ---Get blame information for buffer content
@@ -200,6 +212,12 @@ end
 ---@param commit string Commit hash
 ---@return string[]|nil, string|nil err
 function M.show_file(file, commit)
+  -- Check cache first
+  local cached = cache.get_file(file, commit)
+  if cached then
+    return cached
+  end
+
   local args = { "show", commit .. ":" .. file }
   local result = git_exec(args)
 
@@ -211,7 +229,12 @@ function M.show_file(file, commit)
     return nil, err_msg
   end
 
-  return result.stdout
+  local content = result.stdout
+  
+  -- Cache the result
+  cache.set_file(file, commit, content)
+  
+  return content
 end
 
 ---Format a timestamp as a date string

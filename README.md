@@ -1,6 +1,6 @@
 # Blamer
 
-A focused Neovim plugin for git blame functionality, extracted from Neogit's blame split feature.
+A focused Neovim plugin for git blame functionality with split view and interactive commit navigation.
 
 ## Features
 
@@ -13,6 +13,7 @@ A focused Neovim plugin for git blame functionality, extracted from Neogit's bla
 - **Synchronized scrolling**: Blame panel and file view stay in sync
 - **History navigation**: Back/forward through your blame exploration
 - **Uncommitted changes support**: Blame works with unsaved buffer modifications
+- **Smart caching**: Instant reopening and navigation with intelligent LRU cache
 
 ## Installation
 
@@ -20,8 +21,7 @@ A focused Neovim plugin for git blame functionality, extracted from Neogit's bla
 
 ```lua
 {
-  "blamer",
-  dev = true,
+  "Aitai/blamer.nvim",
   config = function()
     require("blamer").setup()
   end
@@ -32,7 +32,7 @@ A focused Neovim plugin for git blame functionality, extracted from Neogit's bla
 
 ```lua
 use {
-  '/path/to/blamer',
+  'Aitai/blamer.nvim',
   config = function()
     require("blamer").setup()
   end
@@ -43,7 +43,10 @@ use {
 
 ### Commands
 
-- `:Blamer` or `:BlamerToggle` - Toggle the blame split view
+- `:Blamer` - Toggle the blame split view
+- `:BlamerToggle` - Toggle the blame split view
+- `:BlamerCacheStats` - Show cache statistics
+- `:BlamerCacheClear` - Clear all cached data
 
 ### Default Keymaps (in blame buffer)
 
@@ -65,15 +68,17 @@ Blamer uses `git blame --porcelain` to retrieve detailed blame information for e
 4. Highlights the hunk under the cursor in bold
 5. Synchronizes scrolling between blame panel and file view
 
-## Comparison with Neogit
+### Caching
 
-This plugin extracts only the blame functionality from Neogit, making it:
+Blamer implements an intelligent LRU (Least Recently Used) cache that stores:
+- Git blame results for files at different commits
+- File contents at specific commits
 
-- **Lighter**: No dependencies on Neogit's infrastructure
-- **Focused**: Only git blame, no status, commit, or other git operations
-- **Standalone**: Works independently without requiring Neogit
-- **Simpler**: Easier to understand and modify for your needs
+This makes:
+- **Reopening blame views instant** - No need to re-run git blame
+- **History navigation (C-o/C-i) instant** - Previously visited states load instantly
+- **Re-blaming at commits instant** - Once loaded, commit views are cached
 
-## Credits
+The cache automatically manages memory by evicting least recently used entries (default: 50 blame results, 100 file contents).
 
-Based on the excellent blame implementation in [Neogit](https://github.com/NeogitOrg/neogit).
+

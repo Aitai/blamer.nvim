@@ -3,6 +3,7 @@ local git = require("blamer.git")
 local ui = require("blamer.ui")
 local commit = require("blamer.commit")
 local diff = require("blamer.diff")
+local cache = require("blamer.cache")
 
 local api = vim.api
 
@@ -695,16 +696,42 @@ local function toggle()
   end
 end
 
+---Show cache statistics
+local function cache_stats()
+  local stats = cache.stats()
+  vim.notify(
+    string.format(
+      "Blame Cache: %d/%d entries\nFile Cache: %d/%d entries",
+      stats.blame_entries,
+      stats.blame_max,
+      stats.file_entries,
+      stats.file_max
+    ),
+    vim.log.levels.INFO,
+    { title = "Blamer Cache" }
+  )
+end
+
+---Clear cache
+local function cache_clear()
+  cache.clear()
+  vim.notify("Cache cleared", vim.log.levels.INFO, { title = "Blamer" })
+end
+
 ---Setup the plugin
 local function setup()
   ui.setup_highlights()
   
   vim.api.nvim_create_user_command("Blamer", toggle, {})
   vim.api.nvim_create_user_command("BlamerToggle", toggle, {})
+  vim.api.nvim_create_user_command("BlamerCacheStats", cache_stats, {})
+  vim.api.nvim_create_user_command("BlamerCacheClear", cache_clear, {})
 end
 
 return {
   setup = setup,
   toggle = toggle,
   is_open = is_open,
+  cache_stats = cache_stats,
+  cache_clear = cache_clear,
 }
