@@ -210,27 +210,15 @@ end
 ---Get blame information for a file
 ---@param file string Path to file
 ---@param commit string|nil Commit to blame from (defaults to working tree)
----@param line_start number|nil Start line (1-indexed, for viewport optimization)
----@param line_end number|nil End line (for viewport optimization)
 ---@return BlameEntry[]|nil, string|nil err
-function M.blame_file(file, commit, line_start, line_end)
-  -- For viewport blaming, don't use cache as it's instant anyway
-  local use_cache = not line_start and not line_end
-  
-  if use_cache then
-    local cached = cache.get_blame(file, commit)
-    if cached then
-      return cached
-    end
+function M.blame_file(file, commit)
+  -- Check cache first
+  local cached = cache.get_blame(file, commit)
+  if cached then
+    return cached
   end
 
   local args = { "blame", "--incremental", "--porcelain" }
-  
-  -- Add line range for viewport optimization
-  if line_start and line_end then
-    table.insert(args, "-L")
-    table.insert(args, string.format("%d,%d", line_start, line_end))
-  end
   
   if commit then
     table.insert(args, commit)
@@ -250,10 +238,8 @@ function M.blame_file(file, commit, line_start, line_end)
 
   local entries = M.parse_blame_porcelain(result.stdout)
   
-  -- Only cache full file blames
-  if use_cache then
-    cache.set_blame(file, commit, entries)
-  end
+  -- Cache the result
+  cache.set_blame(file, commit, entries)
   
   return entries
 end
