@@ -5,6 +5,7 @@ A focused Neovim plugin for git blame functionality with split view and interact
 ## Features
 
 - **Split view blame**: Side-by-side blame information and file content
+- **Resizable split**: Dynamically resize the blame panel to see more commit details
 - **Color-coded commits**: Visual distinction between different commits
 - **Interactive navigation**:
   - Navigate through commit history

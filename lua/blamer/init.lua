@@ -382,6 +382,21 @@ function Blamer:setup_scroll_sync()
       self.syncing = false
     end,
   })
+
+  api.nvim_create_autocmd("WinResized", {
+    group = augroup,
+    callback = function()
+      if not api.nvim_win_is_valid(self.blame_win) or not api.nvim_buf_is_valid(self.blame_buf) then
+        return
+      end
+      
+      local new_width = api.nvim_win_get_width(self.blame_win)
+      if new_width ~= self.width then
+        self.width = new_width
+        self:refresh_blame_content()
+      end
+    end,
+  })
   
   self.augroup = augroup
 end
@@ -449,6 +464,26 @@ function Blamer:reblame(commit, line)
   end
 
   return true
+end
+
+---Refresh blame content with current width (for resize)
+function Blamer:refresh_blame_content()
+  if not api.nvim_buf_is_valid(self.blame_buf) or not api.nvim_win_is_valid(self.blame_win) then
+    return
+  end
+
+  local cursor_pos = api.nvim_win_get_cursor(self.blame_win)
+  local view = vim.fn.winsaveview()
+
+  local lines, highlights = self:render_blame_lines()
+  vim.bo[self.blame_buf].modifiable = true
+  api.nvim_buf_set_lines(self.blame_buf, 0, -1, false, lines)
+  vim.bo[self.blame_buf].modifiable = false
+  self:apply_highlights(highlights)
+
+  pcall(api.nvim_win_set_cursor, self.blame_win, cursor_pos)
+  pcall(vim.fn.winrestview, view)
+  self:update_hunk_highlight()
 end
 
 ---Update view buffer content
