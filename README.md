@@ -5,6 +5,7 @@ A focused Neovim plugin for git blame functionality with split view and interact
 ## Features
 
 - **Split view blame**: Side-by-side blame information and file content
+- **Multi-line commit messages**: Long commit messages wrap across multiple lines for better readability
 - **Resizable split**: Dynamically resize the blame panel to see more commit details
 - **Color-coded commits**: Visual distinction between different commits
 - **Interactive navigation**:
@@ -15,6 +16,7 @@ A focused Neovim plugin for git blame functionality with split view and interact
 - **History navigation**: Back/forward through your blame exploration
 - **Uncommitted changes support**: Blame works with unsaved buffer modifications
 - **Smart caching**: Instant reopening and navigation with intelligent LRU cache
+- **Automatic cache invalidation**: Detects external file changes (git operations, external edits) and refreshes blame automatically
 
 ## Installation
 
@@ -71,3 +73,15 @@ This makes:
 - **Re-blaming at commits instant** - Once loaded, commit views are cached
 
 The cache automatically manages memory by evicting least recently used entries (default: 50 blame results, 100 file contents).
+
+#### Automatic Cache Invalidation
+
+Blamer automatically detects when files are modified outside of Neovim and invalidates stale cache entries:
+
+- **File modification tracking**: Uses file modification time (mtime) to detect changes
+- **Git operation detection**: Automatically refreshes after `git checkout`, `git pull`, `git rebase`, etc.
+- **External editor changes**: Detects modifications made by other editors or tools
+- **Smart validation**: Only checks current file (HEAD), historical commits remain cached
+- **Seamless experience**: No manual cache clearing needed, works transparently
+
+When you switch branches, pull changes, or modify files externally, Blamer automatically detects the changes and fetches fresh blame data on the next access. This ensures you always see accurate, up-to-date blame information without manual intervention.
