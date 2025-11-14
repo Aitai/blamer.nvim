@@ -24,6 +24,8 @@ local api = vim.api
 ---@field original_modified boolean
 ---@field temp_buf number|nil
 ---@field syncing boolean
+---@field current_commit string|nil
+---@field current_filename string|nil
 local Blamer = {}
 Blamer.__index = Blamer
 
@@ -64,6 +66,7 @@ function Blamer.new(file_path)
     original_modified = has_modifications,
     syncing = false,
     current_commit = nil,  -- Track which commit we're viewing
+    current_filename = file_path,  -- Track the filename at the current commit
   }, Blamer)
 
   return self
@@ -427,6 +430,15 @@ function Blamer:reblame(commit_sha, line)
     commit_sha = nil
   end
 
+  -- Resolve the filename at this commit
+  local resolved_filename = self.file_path
+  if commit_sha then
+    local resolved = git.resolve_path_at_commit(self.file_path, commit_sha)
+    if resolved then
+      resolved_filename = resolved
+    end
+  end
+
   local new_entries, err = load_blame(self.file_path, commit_sha, self.original_modified, self.view_buf)
 
   if not new_entries then
@@ -436,6 +448,7 @@ function Blamer:reblame(commit_sha, line)
 
   self.blame_entries = new_entries
   self.current_commit = commit_sha
+  self.current_filename = resolved_filename
   self.commit_colors = {}
   self.next_color_index = 1
   self.last_highlighted_commit = nil
@@ -465,7 +478,7 @@ function Blamer:reblame(commit_sha, line)
       end
     end
 
-    table.insert(self.history_stack, { commit = commit_sha, line = line })
+    table.insert(self.history_stack, { commit = commit_sha, line = line, filename = resolved_filename })
     self.history_index = #self.history_stack
   end
 
@@ -521,7 +534,10 @@ function Blamer:update_view_buffer(commit_sha)
   vim.bo[self.temp_buf].modifiable = false
   vim.bo[self.temp_buf].filetype = vim.bo[self.view_buf].filetype
 
-  local buf_name = string.format("%s:%s", commit_sha, self.file_path)
+  -- Use the resolved filename for this commit
+  local display_filename = self.current_filename or self.file_path
+
+  local buf_name = string.format("%s:%s", commit_sha, display_filename)
   pcall(api.nvim_buf_set_name, self.temp_buf, buf_name)
 end
 
@@ -562,6 +578,8 @@ function Blamer:navigate_history(direction)
 
   if new_entries then
     self.blame_entries = new_entries
+    self.current_commit = entry.commit
+    self.current_filename = entry.filename or self.file_path
     self.commit_colors = {}
     self.next_color_index = 1
     self:update_view_buffer(entry.commit)
@@ -630,7 +648,7 @@ function Blamer:open()
   self:setup_keymaps()
   self:setup_scroll_sync()
 
-  table.insert(self.history_stack, { commit = nil, line = initial_line })
+  table.insert(self.history_stack, { commit = nil, line = initial_line, filename = self.file_path })
   self.history_index = 1
 
   vim.defer_fn(function()
