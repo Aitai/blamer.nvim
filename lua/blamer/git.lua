@@ -199,8 +199,21 @@ end
 ---@param commit string|nil Commit to blame from (defaults to working tree)
 ---@return BlameEntry[]|nil, string|nil err
 function M.blame_file(file, commit)
+  -- Get file modification time for cache validation (only for HEAD/current file)
+  local mtime = nil
+  if not commit or commit == "HEAD" then
+    local git_root = M.get_git_root()
+    if git_root then
+      local full_path = git_root .. "/" .. file
+      local stat = vim.loop.fs_stat(full_path)
+      if stat then
+        mtime = stat.mtime.sec
+      end
+    end
+  end
+
   -- Check cache first
-  local cached = cache.get_blame(file, commit)
+  local cached = cache.get_blame(file, commit, mtime)
   if cached then
     return cached
   end
@@ -225,8 +238,8 @@ function M.blame_file(file, commit)
 
   local entries = M.parse_blame_porcelain(result.stdout)
 
-  -- Cache the result
-  cache.set_blame(file, commit, entries)
+  -- Cache the result with mtime for validation
+  cache.set_blame(file, commit, entries, mtime)
 
   return entries
 end

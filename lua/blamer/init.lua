@@ -863,6 +863,31 @@ local function setup()
     end,
   })
 
+  -- Detect external file changes and clear cache
+  vim.api.nvim_create_autocmd({"FileChangedShellPost", "FocusGained", "BufEnter"}, {
+    callback = function(args)
+      if not api.nvim_buf_is_valid(args.buf) then
+        return
+      end
+
+      local git_root = git.get_git_root()
+      if not git_root then
+        return
+      end
+
+      local file_path = get_git_relative_path(git_root)
+      if file_path then
+        -- Cache will auto-invalidate based on mtime check
+        -- No need to explicitly clear, just preload if needed
+        vim.defer_fn(function()
+          if api.nvim_buf_is_valid(args.buf) and not vim.bo[args.buf].modified then
+            preload_blame(args.buf)
+          end
+        end, 100)
+      end
+    end,
+  })
+
   vim.api.nvim_create_user_command("Blamer", toggle, {})
   vim.api.nvim_create_user_command("BlamerToggle", toggle, {})
   vim.api.nvim_create_user_command("BlamerCacheStats", cache_stats, {})
