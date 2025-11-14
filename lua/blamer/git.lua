@@ -345,6 +345,13 @@ end
 ---@param commit string Commit hash to resolve path at
 ---@return string|nil path Path of the file at that commit
 function M.resolve_path_at_commit(file, commit)
+  -- Normalize commit to full hash for comparisons
+  local full_commit_result = git_exec({ "rev-parse", commit })
+  if full_commit_result.code ~= 0 or not full_commit_result.stdout[1] then
+    return nil
+  end
+  local full_commit = full_commit_result.stdout[1]
+
   -- First check if the current path exists at this commit
   local result = git_exec({ "ls-tree", "--name-only", "-r", commit, "--", file })
   if result.code == 0 and result.stdout[1] then
@@ -388,16 +395,23 @@ function M.resolve_path_at_commit(file, commit)
   end
 
   -- Trace back from current path through renames to find path at target commit
+  -- We need to iterate multiple times to handle chains of renames
   local current_path = file
-  for _, rename in ipairs(renames) do
-    if current_path == rename.new_path then
-      -- Check if the target commit is before this rename
-      local merge_base = git_exec({ "merge-base", commit, rename.commit })
-      if merge_base.code == 0 and merge_base.stdout[1] then
-        local is_ancestor = git_exec({ "merge-base", "--is-ancestor", commit, rename.commit })
-        if is_ancestor.code == 0 then
-          -- Target commit is before the rename, use old path
-          current_path = rename.old_path
+  local changed = true
+  while changed do
+    changed = false
+    for _, rename in ipairs(renames) do
+      if current_path == rename.new_path then
+        -- Check if the target commit is strictly before this rename
+        -- (not the rename commit itself, since at that commit the new path exists)
+        if full_commit ~= rename.commit then
+          local is_ancestor = git_exec({ "merge-base", "--is-ancestor", full_commit, rename.commit })
+          if is_ancestor.code == 0 then
+            -- Target commit is before the rename, use old path
+            current_path = rename.old_path
+            changed = true
+            break
+          end
         end
       end
     end
