@@ -231,6 +231,10 @@ function Blamer:redraw_hunk(hunk, start_line, is_bold)
   local color = ui.get_commit_color(self.commit_colors, hunk.commit, is_bold)
   local commit_short = git.abbreviate_commit(hunk.commit)
   local message_hl = is_bold and "BlamerMessageBold" or "BlamerMessage"
+  local date = git.format_date(hunk.author_time)
+
+  -- Clear existing highlights for this hunk's lines
+  api.nvim_buf_clear_namespace(self.blame_buf, self.highlight_ns, start_line, start_line + hunk.line_count)
 
   for i = 1, hunk.line_count do
     local buf_line = start_line + i - 1
@@ -248,6 +252,11 @@ function Blamer:redraw_hunk(hunk, start_line, is_bold)
       local prefix = string.format("- %s %s ", commit_short, hunk.author)
       local msg_start = #prefix
       api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, message_hl, buf_line, msg_start, msg_start + #hunk.summary)
+
+      -- Add date highlight
+      local line_text = api.nvim_buf_get_lines(self.blame_buf, buf_line, buf_line + 1, false)[1] or ""
+      local date_start = #line_text - #date
+      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, "BlamerDate", buf_line, date_start, date_start + #date)
     elseif i == 1 then
       local commit_hl_end = #"┍ " + #commit_short
       api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, commit_hl_end)
@@ -257,6 +266,11 @@ function Blamer:redraw_hunk(hunk, start_line, is_bold)
         local author_end = author_start + #hunk.author
         api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, author_start, author_end)
       end
+
+      -- Add date highlight
+      local line_text = api.nvim_buf_get_lines(self.blame_buf, buf_line, buf_line + 1, false)[1] or ""
+      local date_start = #line_text - #date
+      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, "BlamerDate", buf_line, date_start, date_start + #date)
     elseif i == 2 then
       local symbol = (i == hunk.line_count) and "┕ " or "│ "
       api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, #symbol)
@@ -277,11 +291,16 @@ function Blamer:update_hunk_highlight()
   local line = api.nvim_win_get_cursor(self.blame_win)[1]
   local entry = self.blame_entries[line]
 
-  if not entry or (self.last_highlighted_commit and self.last_highlighted_commit == entry.commit) then
+  if not entry then
     return
   end
 
   local new_commit = entry.commit
+
+  if self.last_highlighted_commit and self.last_highlighted_commit == new_commit then
+    return
+  end
+
   local old_commit = self.last_highlighted_commit
   self.last_highlighted_commit = new_commit
 
@@ -289,7 +308,7 @@ function Blamer:update_hunk_highlight()
   local line_nr = 1
 
   for _, hunk in ipairs(hunks) do
-    local is_old = hunk.commit == old_commit
+    local is_old = old_commit and hunk.commit == old_commit
     local is_new = hunk.commit == new_commit
 
     if is_old or is_new then
@@ -514,7 +533,7 @@ end
 function Blamer:navigate_history(direction)
   local new_index = self.history_index + direction
   local boundary_msg = direction == -1 and "Already at beginning of history" or "Already at end of history"
-  
+
   if (direction == -1 and new_index < 1) or (direction == 1 and new_index > #self.history_stack) then
     vim.notify(boundary_msg, vim.log.levels.INFO, { title = "Blamer" })
     return
