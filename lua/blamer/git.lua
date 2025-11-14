@@ -225,13 +225,22 @@ function M.blame_file(file, commit)
     return cached
   end
 
+  -- Resolve path at commit if blaming a historical version
+  local blame_path = file
+  if commit then
+    local resolved = M.resolve_path_at_commit(file, commit)
+    if resolved then
+      blame_path = resolved
+    end
+  end
+
   local args = { "blame", "--incremental", "--porcelain" }
 
   if commit then
     table.insert(args, commit)
   end
   table.insert(args, "--")
-  table.insert(args, file)
+  table.insert(args, blame_path)
 
   local result = git_exec(args)
 
@@ -282,7 +291,14 @@ function M.show_file(file, commit)
     return cached
   end
 
-  local args = { "show", commit .. ":" .. file }
+  -- Resolve path at commit (handles renames)
+  local show_path = file
+  local resolved = M.resolve_path_at_commit(file, commit)
+  if resolved then
+    show_path = resolved
+  end
+
+  local args = { "show", commit .. ":" .. show_path }
   local result = git_exec(args)
 
   if result.code ~= 0 then
@@ -321,6 +337,78 @@ function M.get_git_root()
   if result.code == 0 and result.stdout[1] then
     return result.stdout[1]
   end
+  return nil
+end
+
+---Resolve the file path at a specific commit (handles renames)
+---@param file string Current file path
+---@param commit string Commit hash to resolve path at
+---@return string|nil path Path of the file at that commit
+function M.resolve_path_at_commit(file, commit)
+  -- First check if the current path exists at this commit
+  local result = git_exec({ "ls-tree", "--name-only", "-r", commit, "--", file })
+  if result.code == 0 and result.stdout[1] then
+    return file
+  end
+
+  -- Path doesn't exist, try to find it via rename tracking
+  -- Get all renames in history with their commit hashes
+  local log_result = git_exec({
+    "log",
+    "--follow",
+    "--diff-filter=R",
+    "--name-status",
+    "--format=%H",
+    "--",
+    file
+  })
+
+  if log_result.code ~= 0 or #log_result.stdout == 0 then
+    return nil
+  end
+
+  -- Parse the log output to build rename history
+  -- Format: commit_hash\nR<score>\told_path\tnew_path\ncommit_hash\n...
+  local renames = {}
+  local current_commit_sha = nil
+
+  for _, line in ipairs(log_result.stdout) do
+    if line:match("^[a-f0-9]+$") then
+      current_commit_sha = line
+    elseif line:match("^R%d*\t") then
+      local old_path, new_path = line:match("^R%d*\t(.+)\t(.+)$")
+      if old_path and new_path and current_commit_sha then
+        table.insert(renames, {
+          commit = current_commit_sha,
+          old_path = old_path,
+          new_path = new_path,
+        })
+      end
+    end
+  end
+
+  -- Trace back from current path through renames to find path at target commit
+  local current_path = file
+  for _, rename in ipairs(renames) do
+    if current_path == rename.new_path then
+      -- Check if the target commit is before this rename
+      local merge_base = git_exec({ "merge-base", commit, rename.commit })
+      if merge_base.code == 0 and merge_base.stdout[1] then
+        local is_ancestor = git_exec({ "merge-base", "--is-ancestor", commit, rename.commit })
+        if is_ancestor.code == 0 then
+          -- Target commit is before the rename, use old path
+          current_path = rename.old_path
+        end
+      end
+    end
+  end
+
+  -- Verify the resolved path exists at the commit
+  local verify_result = git_exec({ "ls-tree", "--name-only", "-r", commit, "--", current_path })
+  if verify_result.code == 0 and verify_result.stdout[1] then
+    return current_path
+  end
+
   return nil
 end
 
