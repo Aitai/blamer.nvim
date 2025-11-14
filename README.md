@@ -79,9 +79,10 @@ The cache automatically manages memory by evicting least recently used entries (
 Blamer automatically detects when files are modified outside of Neovim and invalidates stale cache entries:
 
 - **File modification tracking**: Uses file modification time (mtime) to detect changes
+- **HEAD commit tracking**: Detects when commits are made and invalidates cached blame data
 - **Git operation detection**: Automatically refreshes after `git checkout`, `git pull`, `git rebase`, etc.
 - **External editor changes**: Detects modifications made by other editors or tools
 - **Smart validation**: Only checks current file (HEAD), historical commits remain cached
 - **Seamless experience**: No manual cache clearing needed, works transparently
 
-When you switch branches, pull changes, or modify files externally, Blamer automatically detects the changes and fetches fresh blame data on the next access. This ensures you always see accurate, up-to-date blame information without manual intervention.
+When you switch branches, pull changes, commit changes, or modify files externally, Blamer automatically detects the changes and fetches fresh blame data on the next access. This ensures you always see accurate, up-to-date blame information without manual intervention.

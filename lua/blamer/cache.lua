@@ -97,8 +97,9 @@ local file_cache = create_lru_cache(MAX_FILE_CACHE)
 ---@param file_path string
 ---@param commit string|nil
 ---@param mtime number|nil File modification time to validate cache freshness
+---@param head_commit string|nil Current HEAD commit hash for validation
 ---@return BlameEntry[]|nil
-function M.get_blame(file_path, commit, mtime)
+function M.get_blame(file_path, commit, mtime, head_commit)
   local key = file_path .. ":" .. (commit or "HEAD")
   local cached = blame_cache.get(key)
 
@@ -106,6 +107,13 @@ function M.get_blame(file_path, commit, mtime)
   if cached and mtime and (commit == nil or commit == "HEAD") then
     if not cached.mtime or cached.mtime < mtime then
       -- File was modified after cache was created, invalidate it
+      blame_cache.set(key, nil)
+      return nil
+    end
+
+    -- Also check if HEAD commit has changed (e.g., after a commit)
+    if head_commit and cached.head_commit and cached.head_commit ~= head_commit then
+      -- HEAD has moved, invalidate the cache
       blame_cache.set(key, nil)
       return nil
     end
@@ -119,11 +127,12 @@ end
 ---@param commit string|nil
 ---@param entries BlameEntry[]
 ---@param mtime number|nil File modification time for cache validation
-function M.set_blame(file_path, commit, entries, mtime)
+---@param head_commit string|nil Current HEAD commit hash for validation
+function M.set_blame(file_path, commit, entries, mtime, head_commit)
   local key = file_path .. ":" .. (commit or "HEAD")
-  -- Store with mtime for HEAD entries to enable cache invalidation
+  -- Store with mtime and head_commit for HEAD entries to enable cache invalidation
   if mtime and (commit == nil or commit == "HEAD") then
-    blame_cache.set(key, { data = entries, mtime = mtime })
+    blame_cache.set(key, { data = entries, mtime = mtime, head_commit = head_commit })
   else
     blame_cache.set(key, entries)
   end

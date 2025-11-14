@@ -199,8 +199,9 @@ end
 ---@param commit string|nil Commit to blame from (defaults to working tree)
 ---@return BlameEntry[]|nil, string|nil err
 function M.blame_file(file, commit)
-  -- Get file modification time for cache validation (only for HEAD/current file)
+  -- Get file modification time and HEAD commit for cache validation (only for HEAD/current file)
   local mtime = nil
+  local head_commit = nil
   if not commit or commit == "HEAD" then
     local git_root = M.get_git_root()
     if git_root then
@@ -210,10 +211,16 @@ function M.blame_file(file, commit)
         mtime = stat.mtime.sec
       end
     end
+
+    -- Get current HEAD commit to detect when commits are made
+    local head_result = git_exec({ "rev-parse", "HEAD" })
+    if head_result.code == 0 and head_result.stdout[1] then
+      head_commit = head_result.stdout[1]
+    end
   end
 
   -- Check cache first
-  local cached = cache.get_blame(file, commit, mtime)
+  local cached = cache.get_blame(file, commit, mtime, head_commit)
   if cached then
     return cached
   end
@@ -238,8 +245,8 @@ function M.blame_file(file, commit)
 
   local entries = M.parse_blame_porcelain(result.stdout)
 
-  -- Cache the result with mtime for validation
-  cache.set_blame(file, commit, entries, mtime)
+  -- Cache the result with mtime and head_commit for validation
+  cache.set_blame(file, commit, entries, mtime, head_commit)
 
   return entries
 end
