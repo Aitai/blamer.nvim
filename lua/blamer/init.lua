@@ -71,16 +71,16 @@ end
 
 ---Helper to load blame entries with modified buffer handling
 ---@param file_path string
----@param commit string|nil
+---@param commit_sha string|nil
 ---@param original_modified boolean
 ---@param view_buf number|nil
 ---@return BlameEntry[]|nil, string|nil
-local function load_blame(file_path, commit, original_modified, view_buf)
+local function load_blame(file_path, commit_sha, original_modified, view_buf)
   if original_modified and view_buf and api.nvim_buf_is_valid(view_buf) then
     local content = api.nvim_buf_get_lines(view_buf, 0, -1, false)
     return git.blame_buffer(file_path, content)
   else
-    return git.blame_file(file_path, commit)
+    return git.blame_file(file_path, commit_sha)
   end
 end
 
@@ -141,47 +141,55 @@ function Blamer:render_blame_lines()
       table.insert(highlights, { line = line_idx, hl_group = "BlamerMessage", col_start = #prefix, col_end = #prefix + #summary })
       table.insert(highlights, { line = line_idx, hl_group = "BlamerDate", col_start = date_start, col_end = date_start + #date })
     else
-      for i = 1, hunk.line_count do
-        if i == 1 then
-          local prefix = string.format("┍ %s %s", commit_short, author)
-          local prefix_width = vim.fn.strdisplaywidth(prefix)
-          local date_width = vim.fn.strdisplaywidth(date)
-          local available = self.width - date_width - 2
-          if prefix_width > available then
-            author = ui.truncate(author, available - 2 - #commit_short)
-            prefix = string.format("┍ %s %s", commit_short, author)
-            prefix_width = vim.fn.strdisplaywidth(prefix)
-          end
-          local padding = math.max(1, self.width - prefix_width - date_width)
-          local line = prefix .. string.rep(" ", padding) .. date
-          table.insert(lines, line)
+      -- First line: commit hash, author, date
+      local prefix = string.format("┍ %s %s", commit_short, author)
+      local prefix_width = vim.fn.strdisplaywidth(prefix)
+      local date_width = vim.fn.strdisplaywidth(date)
+      local available = self.width - date_width - 2
+      if prefix_width > available then
+        author = ui.truncate(author, available - 2 - #commit_short)
+        prefix = string.format("┍ %s %s", commit_short, author)
+        prefix_width = vim.fn.strdisplaywidth(prefix)
+      end
+      local padding = math.max(1, self.width - prefix_width - date_width)
+      local line = prefix .. string.rep(" ", padding) .. date
+      table.insert(lines, line)
 
-          local line_idx = #lines - 1
-          local date_start = #prefix + padding
-          -- "┍ " is 4 bytes (3 for ┍, 1 for space), then commit_short, then space
-          local commit_hl_end = #"┍ " + #commit_short
-          table.insert(highlights, { line = line_idx, hl_group = color, col_start = 0, col_end = commit_hl_end })
-          table.insert(highlights, { line = line_idx, hl_group = "BlamerDate", col_start = date_start, col_end = date_start + #date })
-        elseif i == 2 then
-          local symbol = (i == hunk.line_count) and "┕ " or "│ "
-          local available = self.width - vim.fn.strdisplaywidth(symbol)
-          summary = ui.truncate(summary, available)
-          local padding = math.max(0, self.width - vim.fn.strdisplaywidth(symbol .. summary))
-          local line = symbol .. summary .. string.rep(" ", padding)
-          table.insert(lines, line)
+      local line_idx = #lines - 1
+      local date_start = #prefix + padding
+      local commit_hl_end = #"┍ " + #commit_short
+      table.insert(highlights, { line = line_idx, hl_group = color, col_start = 0, col_end = commit_hl_end })
+      table.insert(highlights, { line = line_idx, hl_group = "BlamerDate", col_start = date_start, col_end = date_start + #date })
 
-          local line_idx = #lines - 1
-          table.insert(highlights, { line = line_idx, hl_group = color, col_start = 0, col_end = #symbol })
-          table.insert(highlights, { line = line_idx, hl_group = "BlamerMessage", col_start = #symbol, col_end = #symbol + #summary })
+      -- Wrap commit message across remaining lines
+      local symbol = "│ "
+      local symbol_width = vim.fn.strdisplaywidth(symbol)
+      local msg_available = self.width - symbol_width
+      local wrapped_lines = ui.wrap_text(summary, msg_available)
+
+      for i = 2, hunk.line_count do
+        local msg_idx = i - 1
+        local is_last = (i == hunk.line_count)
+        local current_symbol = is_last and "┕ " or "│ "
+        local current_symbol_width = vim.fn.strdisplaywidth(current_symbol)
+
+        local msg_line, msg_padding
+        if msg_idx <= #wrapped_lines then
+          local msg_text = wrapped_lines[msg_idx]
+          msg_padding = math.max(0, self.width - current_symbol_width - vim.fn.strdisplaywidth(msg_text))
+          msg_line = current_symbol .. msg_text .. string.rep(" ", msg_padding)
+          table.insert(lines, msg_line)
+
+          local current_line_idx = #lines - 1
+          table.insert(highlights, { line = current_line_idx, hl_group = color, col_start = 0, col_end = #current_symbol })
+          table.insert(highlights, { line = current_line_idx, hl_group = "BlamerMessage", col_start = #current_symbol, col_end = #current_symbol + #msg_text })
         else
-          local symbol = (i == hunk.line_count) and "┕" or "│"
-          -- Calculate proper padding accounting for display width of symbol
-          local symbol_width = vim.fn.strdisplaywidth(symbol)
-          local line = symbol .. string.rep(" ", math.max(0, self.width - symbol_width))
-          table.insert(lines, line)
+          msg_padding = math.max(0, self.width - current_symbol_width)
+          msg_line = current_symbol .. string.rep(" ", msg_padding)
+          table.insert(lines, msg_line)
 
-          local line_idx = #lines - 1
-          table.insert(highlights, { line = line_idx, hl_group = color, col_start = 0, col_end = #symbol })
+          local current_line_idx = #lines - 1
+          table.insert(highlights, { line = current_line_idx, hl_group = color, col_start = 0, col_end = #current_symbol })
         end
       end
     end
@@ -236,48 +244,56 @@ function Blamer:redraw_hunk(hunk, start_line, is_bold)
   -- Clear existing highlights for this hunk's lines
   api.nvim_buf_clear_namespace(self.blame_buf, self.highlight_ns, start_line, start_line + hunk.line_count)
 
-  for i = 1, hunk.line_count do
-    local buf_line = start_line + i - 1
+  if hunk.line_count == 1 then
+    local buf_line = start_line
+    local commit_hl_end = #"- " + #commit_short
+    api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, commit_hl_end)
 
-    if hunk.line_count == 1 then
-      local commit_hl_end = #"- " + #commit_short
-      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, commit_hl_end)
+    if is_bold then
+      local author_start = #"- " + #commit_short + #" "
+      local author_end = author_start + #hunk.author
+      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, author_start, author_end)
+    end
 
-      if is_bold then
-        local author_start = #"- " + #commit_short + #" "
-        local author_end = author_start + #hunk.author
-        api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, author_start, author_end)
-      end
+    local prefix = string.format("- %s %s ", commit_short, hunk.author)
+    local msg_start = #prefix
+    api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, message_hl, buf_line, msg_start, msg_start + #hunk.summary)
 
-      local prefix = string.format("- %s %s ", commit_short, hunk.author)
-      local msg_start = #prefix
-      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, message_hl, buf_line, msg_start, msg_start + #hunk.summary)
-
-      -- Add date highlight
+    -- Add date highlight
+    local line_text = api.nvim_buf_get_lines(self.blame_buf, buf_line, buf_line + 1, false)[1] or ""
+    local date_start = #line_text - #date
+    api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, "BlamerDate", buf_line, date_start, date_start + #date)
+  else
+    -- Multi-line hunk: wrap message across lines
+    for i = 1, hunk.line_count do
+      local buf_line = start_line + i - 1
       local line_text = api.nvim_buf_get_lines(self.blame_buf, buf_line, buf_line + 1, false)[1] or ""
-      local date_start = #line_text - #date
-      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, "BlamerDate", buf_line, date_start, date_start + #date)
-    elseif i == 1 then
-      local commit_hl_end = #"┍ " + #commit_short
-      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, commit_hl_end)
 
-      if is_bold then
-        local author_start = #"┍ " + #commit_short + #" "
-        local author_end = author_start + #hunk.author
-        api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, author_start, author_end)
+      if i == 1 then
+        local commit_hl_end = #"┍ " + #commit_short
+        api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, commit_hl_end)
+
+        if is_bold then
+          local author_start = #"┍ " + #commit_short + #" "
+          local author_end = author_start + #hunk.author
+          api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, author_start, author_end)
+        end
+
+        -- Add date highlight
+        local date_start = #line_text - #date
+        api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, "BlamerDate", buf_line, date_start, date_start + #date)
+      else
+        -- Message lines
+        local is_last = (i == hunk.line_count)
+        local symbol = is_last and "┕ " or "│ "
+        api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, #symbol)
+
+        -- Extract and highlight message text if present
+        local msg_text = line_text:sub(#symbol + 1):match("^%s*(.-)%s*$")
+        if msg_text and msg_text ~= "" then
+          api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, message_hl, buf_line, #symbol, #symbol + #msg_text)
+        end
       end
-
-      -- Add date highlight
-      local line_text = api.nvim_buf_get_lines(self.blame_buf, buf_line, buf_line + 1, false)[1] or ""
-      local date_start = #line_text - #date
-      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, "BlamerDate", buf_line, date_start, date_start + #date)
-    elseif i == 2 then
-      local symbol = (i == hunk.line_count) and "┕ " or "│ "
-      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, #symbol)
-      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, message_hl, buf_line, #symbol, #symbol + #hunk.summary)
-    else
-      local symbol = (i == hunk.line_count) and "┕" or "│"
-      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, #symbol)
     end
   end
 end

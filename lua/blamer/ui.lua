@@ -114,4 +114,31 @@ function M.truncate(str, max_width)
   return str
 end
 
+---Wrap text to fit within a given width
+---@param text string
+---@param width number
+---@return string[] lines
+function M.wrap_text(text, width)
+  local lines = {}
+  local current_line = ""
+
+  for word in text:gmatch("%S+") do
+    local test_line = current_line == "" and word or (current_line .. " " .. word)
+    if vim.fn.strdisplaywidth(test_line) <= width then
+      current_line = test_line
+    else
+      if current_line ~= "" then
+        table.insert(lines, current_line)
+      end
+      current_line = word
+    end
+  end
+
+  if current_line ~= "" then
+    table.insert(lines, current_line)
+  end
+
+  return #lines > 0 and lines or {""}
+end
+
 return M
