@@ -46,7 +46,7 @@ use 'Aitai/blamer.nvim'
 - `q` or `<Esc>` - Close blame view
 - `r` - Re-blame at the commit under cursor (view that commit's state)
 - `p` - Navigate to parent commit
-- `s` - Show commit details in a popup
+- `s` - Show commit details
 - `d` - View diff for the commit (uses diffview if installed, otherwise native diff)
 - `[` or `<C-o>` - Go back in navigation history
 - `]` or `<C-i>` - Go forward in navigation history
