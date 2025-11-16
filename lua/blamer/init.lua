@@ -420,6 +420,10 @@ function Blamer:reblame(commit_sha, line, track_hunk)
     commit_sha = nil
   end
 
+  -- Save view and cursor position relative to viewport before any changes
+  local view = api.nvim_win_call(self.blame_win, vim.fn.winsaveview)
+  local cursor_offset = view.lnum - view.topline  -- How many lines from top of window
+
   -- If tracking hunk, get info about the current line's position within its hunk
   local target_commit_sha = nil
   local source_line_number = nil
@@ -503,9 +507,18 @@ function Blamer:reblame(commit_sha, line, track_hunk)
     end
   end
 
-  -- Set cursor immediately without defer
+  -- Restore view, preserving cursor position relative to viewport
   if api.nvim_win_is_valid(self.blame_win) then
-    pcall(api.nvim_win_set_cursor, self.blame_win, { math.min(target_line, #lines), 0 })
+    -- Update cursor to target line and adjust topline to maintain relative position
+    view.lnum = target_line
+    view.topline = math.max(1, target_line - cursor_offset)
+    api.nvim_win_call(self.blame_win, function()
+      vim.fn.winrestview(view)
+    end)
+    -- Also sync the main view window
+    api.nvim_win_call(self.view_win, function()
+      vim.fn.winrestview(view)
+    end)
     self:update_hunk_highlight()
   end
 
@@ -622,28 +635,50 @@ function Blamer:navigate_history(direction)
     return
   end
 
+  -- Save view and cursor position relative to viewport before navigating
+  local view = api.nvim_win_call(self.blame_win, vim.fn.winsaveview)
+  local cursor_offset = view.lnum - view.topline  -- How many lines from top of window
+
   self.history_index = new_index
   local entry = self.history_stack[self.history_index]
 
-  local new_entries = load_blame(self.file_path, entry.commit, self.original_modified, self.view_buf)
+  local new_entries, err = load_blame(self.file_path, entry.commit, self.original_modified, self.view_buf)
 
-  if new_entries then
-    self.blame_entries = new_entries
-    self.current_commit = entry.commit
-    self.current_filename = entry.filename or self.file_path
-    self.commit_colors = {}
-    self.next_color_index = 1
-    self.last_highlighted_commit = nil
-    self.cached_hunks = nil
-    self:update_view_buffer(entry.commit)
+  if not new_entries then
+    vim.notify("History navigation failed: " .. (err or "Unknown error"), vim.log.levels.WARN, { title = "Blamer" })
+    -- Restore original view if navigation fails
+    api.nvim_win_call(self.blame_win, function() vim.fn.winrestview(view) end)
+    self.history_index = self.history_index - direction -- Revert index change
+    return
+  end
 
-    local lines, highlights = self:render_blame_lines()
-    vim.bo[self.blame_buf].modifiable = true
-    api.nvim_buf_set_lines(self.blame_buf, 0, -1, false, lines)
-    vim.bo[self.blame_buf].modifiable = false
-    self:apply_highlights(highlights)
+  self.blame_entries = new_entries
+  self.current_commit = entry.commit
+  self.current_filename = entry.filename or self.file_path
+  self.commit_colors = {}
+  self.next_color_index = 1
+  self.last_highlighted_commit = nil
+  self.cached_hunks = nil
+  self:update_view_buffer(entry.commit)
 
-    pcall(api.nvim_win_set_cursor, self.blame_win, { entry.line, 0 })
+  local lines, highlights = self:render_blame_lines()
+  vim.bo[self.blame_buf].modifiable = true
+  api.nvim_buf_set_lines(self.blame_buf, 0, -1, false, lines)
+  vim.bo[self.blame_buf].modifiable = false
+  self:apply_highlights(highlights)
+
+  -- Restore view, preserving cursor position relative to viewport
+  if api.nvim_win_is_valid(self.blame_win) then
+    local target_line = math.min(entry.line, #lines)
+    view.lnum = target_line
+    view.topline = math.max(1, target_line - cursor_offset)
+    api.nvim_win_call(self.blame_win, function()
+      vim.fn.winrestview(view)
+    end)
+    -- Also sync the main view window
+    api.nvim_win_call(self.view_win, function()
+      vim.fn.winrestview(view)
+    end)
     self:update_hunk_highlight()
   end
 end
