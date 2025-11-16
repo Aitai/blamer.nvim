@@ -111,7 +111,9 @@ function Blamer:render_blame_lines()
   local lines = {}
   local highlights = {}
   -- Cache hunks for later use in update_hunk_highlight
-  self.cached_hunks = ui.get_hunks(self.blame_entries)
+  if not self.cached_hunks then
+    self.cached_hunks = ui.get_hunks(self.blame_entries)
+  end
   local hunks = self.cached_hunks
 
   for _, hunk in ipairs(hunks) do
