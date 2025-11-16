@@ -225,6 +225,7 @@ function Blamer:redraw_hunk(hunk, start_line, is_bold)
   local color = ui.get_commit_color(self.commit_colors, hunk.commit, is_bold)
   local commit_short = git.abbreviate_commit(hunk.commit)
   local message_hl = is_bold and "BlamerMessageBold" or "BlamerMessage"
+  local date_hl = is_bold and "BlamerDateBold" or "BlamerDate"
   local date = git.format_date(hunk.author_time)
 
   -- Clear existing highlights for this hunk's lines
@@ -248,7 +249,7 @@ function Blamer:redraw_hunk(hunk, start_line, is_bold)
     -- Add date highlight
     local line_text = api.nvim_buf_get_lines(self.blame_buf, buf_line, buf_line + 1, false)[1] or ""
     local date_start = #line_text - #date
-    api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, "BlamerDate", buf_line, date_start, date_start + #date)
+    api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, date_hl, buf_line, date_start, date_start + #date)
   else
     -- Multi-line hunk: wrap message across lines
     for i = 1, hunk.line_count do
@@ -267,7 +268,7 @@ function Blamer:redraw_hunk(hunk, start_line, is_bold)
 
         -- Add date highlight
         local date_start = #line_text - #date
-        api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, "BlamerDate", buf_line, date_start, date_start + #date)
+        api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, date_hl, buf_line, date_start, date_start + #date)
       else
         -- Message lines
         local is_last = (i == hunk.line_count)

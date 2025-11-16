@@ -38,6 +38,7 @@ function M.setup_highlights()
   end
 
   vim.api.nvim_set_hl(0, "BlamerDate", { fg = "#9999ff" })
+  vim.api.nvim_set_hl(0, "BlamerDateBold", { fg = "#9999ff", bold = true })
   vim.api.nvim_set_hl(0, "BlamerMessage", { fg = "#555555", italic = true })
   vim.api.nvim_set_hl(0, "BlamerMessageBold", { fg = "#555555", italic = true, bold = true })
 end
