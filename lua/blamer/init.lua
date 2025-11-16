@@ -463,6 +463,7 @@ function Blamer:reblame(commit_sha, line, track_hunk)
   self.commit_colors = {}
   self.next_color_index = 1
   self.last_highlighted_commit = nil
+  self.cached_hunks = nil
 
   self:update_view_buffer(commit_sha)
 
@@ -633,6 +634,7 @@ function Blamer:navigate_history(direction)
     self.commit_colors = {}
     self.next_color_index = 1
     self.last_highlighted_commit = nil
+    self.cached_hunks = nil
     self:update_view_buffer(entry.commit)
 
     local lines, highlights = self:render_blame_lines()
