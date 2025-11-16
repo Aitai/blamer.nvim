@@ -303,7 +303,7 @@ end
 
 ---Update hunk highlighting for current cursor position
 function Blamer:update_hunk_highlight()
-  if not api.nvim_buf_is_valid(self.blame_buf) then
+  if not api.nvim_buf_is_valid(self.blame_buf) or not self.blame_win or not api.nvim_win_is_valid(self.blame_win) then
     return
   end
 
@@ -606,8 +606,6 @@ end
 
 ---Open the blame split
 function Blamer:open()
-  current_instance = self
-
   self.view_win = api.nvim_get_current_win()
   local initial_line = api.nvim_win_get_cursor(self.view_win)[1]
   local initial_view = vim.fn.winsaveview()
@@ -616,6 +614,8 @@ function Blamer:open()
   if not self:ensure_full_blame() then
     return
   end
+
+  current_instance = self
 
   vim.cmd("vsplit")
   vim.cmd("wincmd H")
@@ -747,7 +747,7 @@ function Blamer:close()
   end
 
   -- Close the blame window (use pcall in case it's the last window or already closed)
-  if api.nvim_win_is_valid(self.blame_win) then
+  if self.blame_win and api.nvim_win_is_valid(self.blame_win) then
     pcall(api.nvim_win_close, self.blame_win, true)
   end
 
