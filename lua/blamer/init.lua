@@ -662,6 +662,7 @@ end
 function Blamer:open()
   self.view_win = api.nvim_get_current_win()
   local initial_line = api.nvim_win_get_cursor(self.view_win)[1]
+  local initial_view = vim.fn.winsaveview()
 
   -- Try to load from cache first, or load full blame
   if not self:ensure_full_blame() then
@@ -699,8 +700,15 @@ function Blamer:open()
   end
   vim.wo[self.view_win].wrap = false
 
-  -- Set cursor position immediately
-  pcall(api.nvim_win_set_cursor, self.blame_win, { initial_line, 0 })
+  -- Restore view in the original window to preserve scroll position
+  api.nvim_win_call(self.view_win, function()
+    vim.fn.winrestview(initial_view)
+  end)
+
+  -- Set cursor position and sync view to blame window
+  api.nvim_win_call(self.blame_win, function()
+    vim.fn.winrestview(initial_view)
+  end)
 
   self:apply_highlights(highlights)
   self:setup_keymaps()
