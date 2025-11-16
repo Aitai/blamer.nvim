@@ -110,7 +110,9 @@ end
 function Blamer:render_blame_lines()
   local lines = {}
   local highlights = {}
-  local hunks = ui.get_hunks(self.blame_entries)
+  -- Cache hunks for later use in update_hunk_highlight
+  self.cached_hunks = ui.get_hunks(self.blame_entries)
+  local hunks = self.cached_hunks
 
   for _, hunk in ipairs(hunks) do
     local color_idx
@@ -126,12 +128,12 @@ function Blamer:render_blame_lines()
     local color = ui.get_commit_color(self.commit_colors, hunk.commit, false)
 
     if hunk.line_count == 1 then
-      local prefix = string.format("- %s %s ", commit_short, author)
+      local prefix = "- " .. commit_short .. " " .. author .. " "
       local prefix_width = vim.fn.strdisplaywidth(prefix)
       local date_width = vim.fn.strdisplaywidth(date)
       local available = self.width - prefix_width - date_width - 1
       summary = ui.truncate(summary, available)
-      local padding = math.max(1, self.width - vim.fn.strdisplaywidth(prefix .. summary) - date_width)
+      local padding = math.max(1, self.width - prefix_width - vim.fn.strdisplaywidth(summary) - date_width)
 
       local line = prefix .. summary .. string.rep(" ", padding) .. date
       table.insert(lines, line)
@@ -145,13 +147,13 @@ function Blamer:render_blame_lines()
       table.insert(highlights, { line = line_idx, hl_group = "BlamerDate", col_start = date_start, col_end = date_start + #date })
     else
       -- First line: commit hash, author, date
-      local prefix = string.format("┍ %s %s", commit_short, author)
+      local prefix = "┍ " .. commit_short .. " " .. author
       local prefix_width = vim.fn.strdisplaywidth(prefix)
       local date_width = vim.fn.strdisplaywidth(date)
       local available = self.width - date_width - 2
       if prefix_width > available then
         author = ui.truncate(author, available - 2 - #commit_short)
-        prefix = string.format("┍ %s %s", commit_short, author)
+        prefix = "┍ " .. commit_short .. " " .. author
         prefix_width = vim.fn.strdisplaywidth(prefix)
       end
       local padding = math.max(1, self.width - prefix_width - date_width)
@@ -201,36 +203,17 @@ function Blamer:render_blame_lines()
   return lines, highlights
 end
 
----Helper to apply a single highlight
----@param hl table
-local function apply_single_highlight(buf, ns, hl)
-  local col_start = hl.col_start
-  local col_end = hl.col_end
 
-  if col_start < 0 or col_end < 0 then
-    local line_text = api.nvim_buf_get_lines(buf, hl.line, hl.line + 1, false)[1] or ""
-    local line_len = #line_text
-
-    if col_start < 0 then
-      col_start = line_len + col_start + 1
-    end
-    if col_end < 0 then
-      col_end = line_len + col_end + 1
-    end
-  end
-
-  col_start = math.max(0, col_start)
-  col_end = math.max(col_start, col_end)
-
-  pcall(api.nvim_buf_add_highlight, buf, ns, hl.hl_group, hl.line, col_start, col_end)
-end
 
 ---Apply highlights to buffer
 ---@param highlights table[]
 function Blamer:apply_highlights(highlights)
   api.nvim_buf_clear_namespace(self.blame_buf, self.highlight_ns, 0, -1)
+  -- Batch highlight application with extmarks for better performance
   for _, hl in ipairs(highlights) do
-    apply_single_highlight(self.blame_buf, self.highlight_ns, hl)
+    local col_start = math.max(0, hl.col_start)
+    local col_end = math.max(col_start, hl.col_end)
+    pcall(api.nvim_buf_add_highlight, self.blame_buf, self.highlight_ns, hl.hl_group, hl.line, col_start, col_end)
   end
 end
 
@@ -316,17 +299,20 @@ function Blamer:update_hunk_highlight()
 
   local new_commit = entry.commit
 
-  if self.last_highlighted_commit and self.last_highlighted_commit == new_commit then
+  if self.last_highlighted_commit == new_commit then
     return
   end
 
   local old_commit = self.last_highlighted_commit
   self.last_highlighted_commit = new_commit
 
-  local hunks = ui.get_hunks(self.blame_entries)
-  local line_nr = 1
+  -- Cache hunks if not already cached for this blame state
+  if not self.cached_hunks then
+    self.cached_hunks = ui.get_hunks(self.blame_entries)
+  end
 
-  for _, hunk in ipairs(hunks) do
+  local line_nr = 1
+  for _, hunk in ipairs(self.cached_hunks) do
     local is_old = old_commit and hunk.commit == old_commit
     local is_new = hunk.commit == new_commit
 
@@ -461,12 +447,11 @@ function Blamer:reblame(commit_sha, line)
   vim.bo[self.blame_buf].modifiable = false
   self:apply_highlights(highlights)
 
-  vim.defer_fn(function()
-    if api.nvim_win_is_valid(self.blame_win) then
-      pcall(api.nvim_win_set_cursor, self.blame_win, { math.min(line, #lines), 0 })
-      self:update_hunk_highlight()
-    end
-  end, 10)
+  -- Set cursor immediately without defer
+  if api.nvim_win_is_valid(self.blame_win) then
+    pcall(api.nvim_win_set_cursor, self.blame_win, { math.min(line, #lines), 0 })
+    self:update_hunk_highlight()
+  end
 
   -- Only add to history if it's different from the current entry
   local current_entry = self.history_stack[self.history_index]
@@ -635,16 +620,15 @@ function Blamer:open()
   vim.bo[self.blame_buf].modifiable = false
 
   -- Now create the split and set the buffer
-  vim.cmd("vsplit")
-  vim.cmd("wincmd H")
+  vim.cmd("vsplit | wincmd H")
   api.nvim_win_set_buf(0, self.blame_buf)
   self.blame_win = api.nvim_get_current_win()
 
   api.nvim_win_set_width(self.blame_win, self.width)
-  vim.wo[self.blame_win].number = false
-  vim.wo[self.blame_win].relativenumber = false
-  vim.wo[self.blame_win].wrap = false
-  vim.wo[self.blame_win].list = false  -- Don't show trailing spaces
+  local win_opts = { number = false, relativenumber = false, wrap = false, list = false }
+  for opt, val in pairs(win_opts) do
+    vim.wo[self.blame_win][opt] = val
+  end
   vim.wo[self.view_win].wrap = false
 
   -- Set cursor position immediately before restoring view

@@ -177,18 +177,16 @@ function M.parse_blame_porcelain(output)
   end
 
   -- Convert map to array sorted by line number
-  local entries = {}
-  local max_line = 0
-  for line_num, _ in pairs(entries_map) do
-    if line_num > max_line then
-      max_line = line_num
-    end
+  -- Pre-allocate table for better performance
+  local line_numbers = {}
+  for line_num in pairs(entries_map) do
+    table.insert(line_numbers, line_num)
   end
+  table.sort(line_numbers)
 
-  for line_num = 1, max_line do
-    if entries_map[line_num] then
-      table.insert(entries, entries_map[line_num])
-    end
+  local entries = {}
+  for _, line_num in ipairs(line_numbers) do
+    table.insert(entries, entries_map[line_num])
   end
 
   return entries
