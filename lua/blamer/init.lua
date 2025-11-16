@@ -411,10 +411,32 @@ end
 ---Re-blame at a specific commit
 ---@param commit_sha string|nil
 ---@param line number
+---@param track_hunk boolean|nil If true, find the same commit in new blame and position cursor there
 ---@return boolean success
-function Blamer:reblame(commit_sha, line)
+function Blamer:reblame(commit_sha, line, track_hunk)
   if commit_sha and commit_sha:match("^0+$") then
     commit_sha = nil
+  end
+
+  -- If tracking hunk, get info about the current line's position within its hunk
+  local target_commit_sha = nil
+  local source_line_number = nil
+  local original_line_start = nil
+  if track_hunk and self.blame_entries[line] then
+    local entry = self.blame_entries[line]
+    target_commit_sha = entry.commit
+    source_line_number = entry.line_start  -- The actual line in the source file
+
+    -- Find the start of this hunk to get its original_line_start
+    local hunk_start = line
+    while hunk_start > 1 and self.blame_entries[hunk_start - 1] and
+          self.blame_entries[hunk_start - 1].commit == target_commit_sha and
+          self.blame_entries[hunk_start - 1].author == entry.author and
+          self.blame_entries[hunk_start - 1].summary == entry.summary do
+      hunk_start = hunk_start - 1
+    end
+    -- Track the original line number to identify the correct hunk
+    original_line_start = self.blame_entries[hunk_start].line_start
   end
 
   -- Resolve the filename at this commit
@@ -448,15 +470,50 @@ function Blamer:reblame(commit_sha, line)
   vim.bo[self.blame_buf].modifiable = false
   self:apply_highlights(highlights)
 
+  -- Determine target line
+  local target_line = line
+  if track_hunk and target_commit_sha and original_line_start and source_line_number then
+    -- Find the hunk that matches the commit and original line start
+    for i, entry in ipairs(new_entries) do
+      if entry.commit == target_commit_sha and entry.line_start == original_line_start then
+        -- Found the hunk start, now find the line with matching source line number
+        -- If exact match exists, use it; otherwise use the closest line within the hunk
+        local j = i
+        local found_exact = false
+        while j <= #new_entries and
+              new_entries[j].commit == target_commit_sha and
+              new_entries[j].line_start >= original_line_start do
+          if new_entries[j].line_start == source_line_number then
+            target_line = j
+            found_exact = true
+            break
+          end
+          j = j + 1
+        end
+
+        -- If no exact match (line was modified/removed), stay at hunk start
+        if not found_exact then
+          target_line = i
+        end
+        break
+      end
+    end
+  end
+
   -- Set cursor immediately without defer
   if api.nvim_win_is_valid(self.blame_win) then
-    pcall(api.nvim_win_set_cursor, self.blame_win, { math.min(line, #lines), 0 })
+    pcall(api.nvim_win_set_cursor, self.blame_win, { math.min(target_line, #lines), 0 })
     self:update_hunk_highlight()
   end
 
-  -- Only add to history if it's different from the current entry
+  -- Add NEW state to history
   local current_entry = self.history_stack[self.history_index]
-  if not current_entry or current_entry.commit ~= commit_sha then
+  if not current_entry or current_entry.commit ~= commit_sha or current_entry.line ~= target_line then
+    -- Update current history entry to remember where we were (the cursor position we're leaving from)
+    if current_entry then
+      current_entry.line = line
+    end
+
     -- Trim history if we're not at the end
     if self.history_index < #self.history_stack then
       for i = #self.history_stack, self.history_index + 1, -1 do
@@ -464,7 +521,12 @@ function Blamer:reblame(commit_sha, line)
       end
     end
 
-    table.insert(self.history_stack, { commit = commit_sha, line = line, filename = resolved_filename })
+    -- Add the NEW state (where we've navigated TO)
+    table.insert(self.history_stack, {
+      commit = commit_sha,
+      line = target_line,
+      filename = resolved_filename
+    })
     self.history_index = #self.history_stack
   end
 
@@ -543,7 +605,7 @@ function Blamer:goto_parent(line)
   -- Use the actual commit SHA from the blame entry, not self.current_commit
   -- This ensures we get the resolved commit, not a reference like "abc^"
   local parent_commit = entry.commit .. "^"
-  self:reblame(parent_commit, line)
+  self:reblame(parent_commit, line, true)
 end
 
 ---Helper to navigate history
@@ -568,6 +630,7 @@ function Blamer:navigate_history(direction)
     self.current_filename = entry.filename or self.file_path
     self.commit_colors = {}
     self.next_color_index = 1
+    self.last_highlighted_commit = nil
     self:update_view_buffer(entry.commit)
 
     local lines, highlights = self:render_blame_lines()
@@ -577,6 +640,7 @@ function Blamer:navigate_history(direction)
     self:apply_highlights(highlights)
 
     pcall(api.nvim_win_set_cursor, self.blame_win, { entry.line, 0 })
+    self:update_hunk_highlight()
   end
 end
 
@@ -662,7 +726,7 @@ function Blamer:setup_keymaps()
     local line = api.nvim_win_get_cursor(self.blame_win)[1]
     local entry = self.blame_entries[line]
     if entry and not entry.commit:match("^0+$") then
-      self:reblame(entry.commit, line)
+      self:reblame(entry.commit, line, true)
     end
   end, opts)
 
