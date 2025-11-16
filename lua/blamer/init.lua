@@ -617,12 +617,8 @@ function Blamer:open()
 
   current_instance = self
 
-  vim.cmd("vsplit")
-  vim.cmd("wincmd H")
-
+  -- Create blame buffer first
   self.blame_buf = api.nvim_create_buf(false, true)
-  api.nvim_win_set_buf(0, self.blame_buf)
-  self.blame_win = api.nvim_get_current_win()
 
   vim.bo[self.blame_buf].buftype = "nofile"
   vim.bo[self.blame_buf].bufhidden = "wipe"
@@ -633,6 +629,17 @@ function Blamer:open()
   local buf_name = string.format("Blamer:%s", self.file_path)
   pcall(api.nvim_buf_set_name, self.blame_buf, buf_name)
 
+  -- Render content before creating the window
+  local lines, highlights = self:render_blame_lines()
+  api.nvim_buf_set_lines(self.blame_buf, 0, -1, false, lines)
+  vim.bo[self.blame_buf].modifiable = false
+
+  -- Now create the split and set the buffer
+  vim.cmd("vsplit")
+  vim.cmd("wincmd H")
+  api.nvim_win_set_buf(0, self.blame_buf)
+  self.blame_win = api.nvim_get_current_win()
+
   api.nvim_win_set_width(self.blame_win, self.width)
   vim.wo[self.blame_win].number = false
   vim.wo[self.blame_win].relativenumber = false
@@ -640,27 +647,23 @@ function Blamer:open()
   vim.wo[self.blame_win].list = false  -- Don't show trailing spaces
   vim.wo[self.view_win].wrap = false
 
-  local lines, highlights = self:render_blame_lines()
-  api.nvim_buf_set_lines(self.blame_buf, 0, -1, false, lines)
-  vim.bo[self.blame_buf].modifiable = false
-  self:apply_highlights(highlights)
+  -- Set cursor position immediately before restoring view
+  pcall(api.nvim_win_set_cursor, self.blame_win, { initial_line, 0 })
 
+  -- Restore view in the original window
+  api.nvim_win_call(self.view_win, function()
+    vim.fn.winrestview(initial_view)
+  end)
+
+  self:apply_highlights(highlights)
   self:setup_keymaps()
   self:setup_scroll_sync()
 
   table.insert(self.history_stack, { commit = nil, line = initial_line, filename = self.file_path })
   self.history_index = 1
 
-  vim.defer_fn(function()
-    if api.nvim_win_is_valid(self.blame_win) and api.nvim_win_is_valid(self.view_win) then
-      pcall(api.nvim_win_set_cursor, self.blame_win, { initial_line, 0 })
-      pcall(vim.fn.winrestview, initial_view)
-      api.nvim_win_call(self.blame_win, function()
-        vim.fn.winrestview(initial_view)
-      end)
-      self:update_hunk_highlight()
-    end
-  end, 10)
+  -- Update highlight after everything is set up
+  self:update_hunk_highlight()
 end
 
 ---Setup keymaps
