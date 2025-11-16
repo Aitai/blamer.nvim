@@ -43,16 +43,20 @@ function M.setup_highlights()
   vim.api.nvim_set_hl(0, "BlamerMessageBold", { fg = "#555555", italic = true, bold = true })
 end
 
----Get color index for commit
+---Get color index for commit based on SHA hash
 ---@param commit_colors table
 ---@param next_color_index number
 ---@param commit string
 ---@return number, number new_next_color_index
 function M.get_commit_color_index(commit_colors, next_color_index, commit)
   if not commit_colors[commit] then
-    local color_index = ((next_color_index - 1) % #COMMIT_COLORS) + 1
+    -- A git SHA is already a good hash. Just use a part of it.
+    local last_char = commit:sub(-1)
+    local num_from_hash = tonumber(last_char, 16) or 0
+    -- The result is 0-15, so add 1 to get an index of 1-16.
+    local color_index = num_from_hash + 1
     commit_colors[commit] = color_index
-    return color_index, next_color_index + 1
+    return color_index, next_color_index
   end
   return commit_colors[commit], next_color_index
 end
