@@ -328,14 +328,32 @@ function M.abbreviate_commit(commit)
   return commit:sub(1, 8)
 end
 
----Get git root directory
+-- Cache for git root per buffer
+local root_cache = {}
+
+---Get git root directory with caching
+---@param bufnr number|nil Buffer number for cache key
 ---@return string|nil
-function M.get_git_root()
+function M.get_git_root(bufnr)
+  if bufnr and root_cache[bufnr] then
+    return root_cache[bufnr]
+  end
+
   local result = git_exec({ "rev-parse", "--show-toplevel" })
   if result.code == 0 and result.stdout[1] then
-    return result.stdout[1]
+    local root = result.stdout[1]
+    if bufnr then
+      root_cache[bufnr] = root
+    end
+    return root
   end
   return nil
+end
+
+---Clear git root cache for a buffer
+---@param bufnr number
+function M.clear_git_root_cache(bufnr)
+  root_cache[bufnr] = nil
 end
 
 ---Resolve the file path at a specific commit (handles renames)
@@ -422,6 +440,75 @@ function M.resolve_path_at_commit(file, commit)
   end
 
   return nil
+end
+
+---Execute git command asynchronously
+---@param args string[]
+---@param callback function Callback with result {stdout: string[], stderr: string[], code: number}
+function M.git_exec_async(args, callback)
+  local cmd = { "git", "--no-pager" }
+  vim.list_extend(cmd, args)
+
+  vim.system(cmd, { text = true }, function(obj)
+    vim.schedule(function()
+      local stdout_lines = {}
+      if obj.stdout and obj.stdout ~= "" then
+        stdout_lines = vim.split(obj.stdout, "\n")
+        if stdout_lines[#stdout_lines] == "" then
+          stdout_lines[#stdout_lines] = nil
+        end
+      end
+
+      local stderr_lines = {}
+      if obj.stderr and obj.stderr ~= "" then
+        stderr_lines = vim.split(obj.stderr, "\n")
+      end
+
+      callback({
+        stdout = stdout_lines,
+        stderr = stderr_lines,
+        code = obj.code,
+      })
+    end)
+  end)
+end
+
+---Get blame information for a file asynchronously (for preloading)
+---@param file string Path to file
+---@param callback function|nil Callback with entries or nil on error
+function M.blame_file_async(file, callback)
+  local args = { "blame", "--incremental", "--porcelain", "--", file }
+
+  M.git_exec_async(args, function(result)
+    if result.code == 0 then
+      local entries = M.parse_blame_porcelain(result.stdout)
+
+      -- Get mtime and HEAD commit for caching
+      local mtime = nil
+      local head_commit = nil
+      local git_root = M.get_git_root()
+      if git_root then
+        local full_path = git_root .. "/" .. file
+        local stat = vim.loop.fs_stat(full_path)
+        if stat then
+          mtime = stat.mtime.sec
+        end
+      end
+
+      local head_result = git_exec({ "rev-parse", "HEAD" })
+      if head_result.code == 0 and head_result.stdout[1] then
+        head_commit = head_result.stdout[1]
+      end
+
+      cache.set_blame(file, nil, entries, mtime, head_commit)
+
+      if callback then
+        callback(entries)
+      end
+    elseif callback then
+      callback(nil)
+    end
+  end)
 end
 
 -- Expose git_exec for use by other modules

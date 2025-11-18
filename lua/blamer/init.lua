@@ -38,7 +38,8 @@ local current_instance = nil
 function Blamer.new(file_path)
   file_path = file_path or vim.fn.expand("%:p")
 
-  local git_root = git.get_git_root()
+  local current_buf = vim.fn.bufnr("%")
+  local git_root = git.get_git_root(current_buf)
   if not git_root then
     vim.notify("Not in a git repository", vim.log.levels.ERROR, { title = "Blamer" })
     return nil
@@ -48,7 +49,6 @@ function Blamer.new(file_path)
     file_path = file_path:sub(#git_root + 2)
   end
 
-  local current_buf = vim.fn.bufnr("%")
   local has_modifications = api.nvim_buf_is_valid(current_buf) and vim.bo[current_buf].modified
 
   -- Don't load blame yet - will be loaded from cache or on-demand
@@ -372,23 +372,28 @@ function Blamer:setup_scroll_sync()
         return
       end
 
-      self.syncing = true
       local target_win
       if scrolled_win == self.blame_win then
         target_win = self.view_win
       elseif scrolled_win == self.view_win then
         target_win = self.blame_win
+      else
+        return
       end
 
       if target_win and api.nvim_win_is_valid(target_win) then
-        local view = api.nvim_win_call(scrolled_win, function()
-          return vim.fn.winsaveview()
-        end)
-        api.nvim_win_call(target_win, function()
-          vim.fn.winrestview(view)
-        end)
+        local current_view = api.nvim_win_call(scrolled_win, vim.fn.winsaveview)
+        local target_view = api.nvim_win_call(target_win, vim.fn.winsaveview)
+
+        -- Only sync if topline differs (optimization)
+        if current_view.topline ~= target_view.topline then
+          self.syncing = true
+          api.nvim_win_call(target_win, function()
+            vim.fn.winrestview({ topline = current_view.topline, lnum = current_view.lnum })
+          end)
+          self.syncing = false
+        end
       end
-      self.syncing = false
     end,
   })
 
@@ -749,6 +754,16 @@ function Blamer:open()
   self:setup_keymaps()
   self:setup_scroll_sync()
 
+  -- Add safety cleanup on buffer wipe
+  api.nvim_create_autocmd("BufWipeout", {
+    buffer = self.blame_buf,
+    callback = function()
+      if current_instance == self then
+        current_instance = nil
+      end
+    end,
+  })
+
   table.insert(self.history_stack, { commit = nil, line = initial_line, filename = self.file_path })
   self.history_index = 1
 
@@ -887,7 +902,7 @@ local function cache_clear()
   vim.notify("Cache cleared", vim.log.levels.INFO, { title = "Blamer" })
 end
 
----Pre-load blame for a buffer in the background
+---Pre-load blame for a buffer in the background (async, non-blocking)
 ---@param bufnr number
 local function preload_blame(bufnr)
   vim.schedule(function()
@@ -900,7 +915,7 @@ local function preload_blame(bufnr)
       return
     end
 
-    local git_root = git.get_git_root()
+    local git_root = git.get_git_root(bufnr)
     if not git_root then
       return
     end
@@ -917,22 +932,20 @@ local function preload_blame(bufnr)
       return
     end
 
-    -- Pre-load in background (non-blocking)
+    -- Pre-load in background (async, non-blocking)
     vim.defer_fn(function()
       if not api.nvim_buf_is_valid(bufnr) then
         return
       end
 
-      -- Load blame for the entire file and cache it
       local has_modifications = vim.bo[bufnr].modified
       if has_modifications then
-        -- Don't pre-load for modified buffers
         return
       end
 
-      git.blame_file(file_path)
-      -- Result is automatically cached
-    end, 100)  -- Small delay to not block initial file load
+      -- Async blame operation - doesn't block UI
+      git.blame_file_async(file_path)
+    end, 100)
   end)
 end
 
@@ -959,7 +972,7 @@ local function setup()
 
   vim.api.nvim_create_autocmd("BufWritePost", {
     callback = function(args)
-      local git_root = git.get_git_root()
+      local git_root = git.get_git_root(args.buf)
       if not git_root then
         return
       end
@@ -981,20 +994,36 @@ local function setup()
         return
       end
 
-      local git_root = git.get_git_root()
+      local git_root = git.get_git_root(args.buf)
       if not git_root then
         return
       end
 
       local file_path = get_git_relative_path(git_root)
       if file_path then
-        -- Cache will auto-invalidate based on mtime check
-        -- No need to explicitly clear, just preload if needed
         vim.defer_fn(function()
           if api.nvim_buf_is_valid(args.buf) and not vim.bo[args.buf].modified then
             preload_blame(args.buf)
           end
         end, 100)
+      end
+    end,
+  })
+
+  -- Clear git root cache on buffer wipe and directory change
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    callback = function(args)
+      git.clear_git_root_cache(args.buf)
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("DirChanged", {
+    callback = function()
+      -- Clear all git root caches when directory changes
+      for bufnr = 1, vim.fn.bufnr('$') do
+        if api.nvim_buf_is_valid(bufnr) then
+          git.clear_git_root_cache(bufnr)
+        end
       end
     end,
   })
