@@ -1,22 +1,34 @@
-# Blamer
+# blamer.nvim
 
-A focused Neovim plugin for git blame functionality with split view and interactive commit navigation.
+A robust, feature-rich git blame plugin for Neovim inspired by the need for better code history exploration. It provides a side-by-side split view with intuitive navigation through commit history.
+
+<img width="1987" height="1279" alt="image" src="https://github.com/user-attachments/assets/dd2db5dd-2755-47f9-a51e-1d05f600a423" />
 
 ## Features
 
-- **Split view blame**: Side-by-side blame information and file content
-- **Multi-line commit messages**: Long commit messages wrap across multiple lines for better readability
-- **Resizable split**: Dynamically resize the blame panel to see more commit details
-- **Color-coded commits**: Visual distinction between different commits
-- **Interactive navigation**:
-  - Navigate through commit history
-  - Jump to parent commits
-  - Browse historical file versions
-- **Synchronized scrolling**: Blame panel and file view stay in sync
-- **History navigation**: Back/forward through your blame exploration
-- **Uncommitted changes support**: Blame works with unsaved buffer modifications
-- **Smart caching**: Instant reopening and navigation with intelligent LRU cache
-- **Automatic cache invalidation**: Detects external file changes (git operations, external edits) and refreshes blame automatically
+### Blame Explorer
+- **Split View Interface**: Opens a vertical split showing blame information aligned with your file.
+- **Commit Info**: Displays author and date (YYYY-MM-DD) clearly.
+- **Smart Wrapping**: Automatically wraps long commit messages across multiple lines so you don't miss context.
+- **Active Hunk Highlighting**: Automatically bolds the commit information in the blame panel that corresponds to your current cursor position.
+
+### Navigation & History
+- **Time Travel**: Navigate backward and forward through the file's history using `[` / `]` or standard jump bindings `<C-o>` / `<C-i>`.
+- **Reblame**: Press `r` to view the file state exactly as it was at the commit under your cursor.
+- **Commit Drill-down**: Press `s` to view the full commit details in a separate tab.
+- **Parent Navigation**: Press `p` to instantly blame the parent of the current commit (go back one step in time).
+- **Diff Integration**: Press `d` to view the diff of a specific commit (integrates with `diffview.nvim` if installed, falls back to native diff).
+
+### Performance & Caching
+- **Asynchronous Loading**: Blame data is pre-loaded in the background to ensure instant opening.
+- **Rename Tracking**: Intelligent git history traversal that follows files even after they have been renamed or moved.
+- **LRU Caching**: Implements a Least Recently Used cache to keep memory usage low while ensuring instant access to previously viewed commits.
+- **Smart Invalidation**: Automatically detects when you modify a file, switch branches, or perform git operations, keeping the blame view accurate.
+
+### UX & Polish
+- **Synced Scrolling**: The blame view and your code buffer scroll in perfect lock-step.
+- **Auto-Resizing**: The blame window adjusts automatically to fit content.
+- **Color Coding**: Commits are color-coded by hash, making it easy to visually distinguish changes.
 
 ## Installation
 
@@ -36,53 +48,26 @@ use 'Aitai/blamer.nvim'
 
 ### Commands
 
-- `:Blamer` - Toggle the blame split view
-- `:BlamerToggle` - Toggle the blame split view
-- `:BlamerCacheStats` - Show cache statistics
-- `:BlamerCacheClear` - Clear all cached data
+| Command | Description |
+|---------|-------------|
+| `:BlamerToggle` | Open/Close the blame split view |
+| `:BlamerCacheStats` | View current cache usage statistics |
+| `:BlamerCacheClear` | Manually flush the internal cache |
 
-### Default Keymaps (in blame buffer)
+### Keymaps (Inside Blamer Buffer)
 
-- `q` or `<Esc>` - Close blame view
-- `r` - Re-blame at the commit under cursor (view that commit's state)
-- `p` - Navigate to parent commit
-- `s` - Show commit details
-- `d` - View diff for the commit (uses diffview if installed, otherwise native diff)
-- `[` or `<C-o>` - Go back in navigation history
-- `]` or `<C-i>` - Go forward in navigation history
+| Key | Action |
+|-----|--------|
+| `q` / `<Esc>` | Close the blame view |
+| `[` / `<C-o>` | **Go Back**: View file state at previous point in navigation history |
+| `]` / `<C-i>` | **Go Forward**: View file state at next point in navigation history |
+| `r` | **Reblame**: Reload blame at the specific commit under cursor |
+| `p` | **Parent**: Blame the parent commit of the line under cursor |
+| `s` | **Show**: Open full commit details in a new tab |
+| `d` | **Diff**: Open diff for the commit under cursor |
 
 ## How it Works
 
-Blamer uses `git blame --porcelain` to retrieve detailed blame information for each line of a file. It then:
+Blamer uses `git blame --porcelain` to retrieve detailed blame information. It groups consecutive lines belonging to the same commit into "hunks" and caches the results to ensure instant reopening.
 
-1. Groups consecutive lines with the same commit into "hunks"
-2. Displays commit hash, author, date, and message for each hunk
-3. Color-codes different commits for easy visual scanning
-4. Highlights the hunk under the cursor in bold
-5. Synchronizes scrolling between blame panel and file view
-
-### Caching
-
-Blamer implements an intelligent LRU (Least Recently Used) cache that stores:
-- Git blame results for files at different commits
-- File contents at specific commits
-
-This makes:
-- **Reopening blame views instant** - No need to re-run git blame
-- **History navigation (C-o/C-i) instant** - Previously visited states load instantly
-- **Re-blaming at commits instant** - Once loaded, commit views are cached
-
-The cache automatically manages memory by evicting least recently used entries (default: 50 blame results, 100 file contents).
-
-#### Automatic Cache Invalidation
-
-Blamer automatically detects when files are modified outside of Neovim and invalidates stale cache entries:
-
-- **File modification tracking**: Uses file modification time (mtime) to detect changes
-- **HEAD commit tracking**: Detects when commits are made and invalidates cached blame data
-- **Git operation detection**: Automatically refreshes after `git checkout`, `git pull`, `git rebase`, etc.
-- **External editor changes**: Detects modifications made by other editors or tools
-- **Smart validation**: Only checks current file (HEAD), historical commits remain cached
-- **Seamless experience**: No manual cache clearing needed, works transparently
-
-When you switch branches, pull changes, commit changes, or modify files externally, Blamer automatically detects the changes and fetches fresh blame data on the next access. This ensures you always see accurate, up-to-date blame information without manual intervention.
+The plugin also employs an intelligent LRU (Least Recently Used) cache. This means history navigation and re-opening files is near-instant, but memory usage remains low. It automatically invalidates this cache if it detects file changes, branch switches, or external git operations.
