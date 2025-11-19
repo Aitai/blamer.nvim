@@ -729,7 +729,8 @@ function Blamer:open()
   vim.bo[self.blame_buf].modifiable = false
 
   -- Now create the split and set the buffer
-  vim.cmd("vsplit | wincmd H")
+  -- Create a vertical split to the left of the current window only
+  vim.cmd("leftabove vsplit")
   api.nvim_win_set_buf(0, self.blame_buf)
   self.blame_win = api.nvim_get_current_win()
 
