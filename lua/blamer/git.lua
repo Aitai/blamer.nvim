@@ -204,7 +204,7 @@ function M.blame_file(file, commit)
     local git_root = M.get_git_root()
     if git_root then
       local full_path = git_root .. "/" .. file
-      local stat = vim.loop.fs_stat(full_path)
+      local stat = vim.uv.fs_stat(full_path)
       if stat then
         mtime = stat.mtime.sec
       end
@@ -232,7 +232,7 @@ function M.blame_file(file, commit)
     end
   end
 
-  local args = { "blame", "--incremental", "--porcelain" }
+  local args = { "blame", "--porcelain" }
 
   if commit then
     table.insert(args, commit)
@@ -263,7 +263,7 @@ end
 ---@param content string[] Buffer content
 ---@return BlameEntry[]|nil, string|nil err
 function M.blame_buffer(file, content)
-  local args = { "blame", "--incremental", "--porcelain", "--contents", "-", "--", file }
+  local args = { "blame", "--porcelain", "--contents", "-", "--", file }
   local input = table.concat(content, "\n") .. "\n"
 
   local result = git_exec(args, { stdin = input })
@@ -356,6 +356,18 @@ function M.clear_git_root_cache(bufnr)
   root_cache[bufnr] = nil
 end
 
+---Clear rename resolution caches (call on branch switch or external git operations)
+function M.clear_rename_cache()
+  resolve_cache = {}
+  rename_history_cache = {}
+end
+
+-- Cache for resolved path lookups (file:commit -> resolved_path)
+local resolve_cache = {}
+
+-- Cache for rename history per file (file -> renames list)
+local rename_history_cache = {}
+
 ---Resolve the file path at a specific commit (handles renames)
 ---@param file string Current file path
 ---@param commit string Commit hash to resolve path at
@@ -368,46 +380,58 @@ function M.resolve_path_at_commit(file, commit)
   end
   local full_commit = full_commit_result.stdout[1]
 
+  -- Check resolved path cache
+  local cache_key = file .. ":" .. full_commit
+  if resolve_cache[cache_key] then
+    return resolve_cache[cache_key]
+  end
+
   -- First check if the current path exists at this commit
   local result = git_exec({ "ls-tree", "--name-only", "-r", commit, "--", file })
   if result.code == 0 and result.stdout[1] then
+    resolve_cache[cache_key] = file
     return file
   end
 
   -- Path doesn't exist, try to find it via rename tracking
-  -- Get all renames in history with their commit hashes
-  local log_result = git_exec({
-    "log",
-    "--follow",
-    "--diff-filter=R",
-    "--name-status",
-    "--format=%H",
-    "--",
-    file
-  })
+  -- Use cached rename history if available
+  local renames = rename_history_cache[file]
+  if not renames then
+    local log_result = git_exec({
+      "log",
+      "--follow",
+      "--diff-filter=R",
+      "--name-status",
+      "--format=%H",
+      "--",
+      file
+    })
 
-  if log_result.code ~= 0 or #log_result.stdout == 0 then
-    return nil
-  end
+    if log_result.code ~= 0 or #log_result.stdout == 0 then
+      return nil
+    end
 
-  -- Parse the log output to build rename history
-  -- Format: commit_hash\nR<score>\told_path\tnew_path\ncommit_hash\n...
-  local renames = {}
-  local current_commit_sha = nil
+    -- Parse the log output to build rename history
+    -- Format: commit_hash\nR<score>\told_path\tnew_path\ncommit_hash\n...
+    renames = {}
+    local current_commit_sha = nil
 
-  for _, line in ipairs(log_result.stdout) do
-    if line:match("^[a-f0-9]+$") then
-      current_commit_sha = line
-    elseif line:match("^R%d*\t") then
-      local old_path, new_path = line:match("^R%d*\t(.+)\t(.+)$")
-      if old_path and new_path and current_commit_sha then
-        table.insert(renames, {
-          commit = current_commit_sha,
-          old_path = old_path,
-          new_path = new_path,
-        })
+    for _, line in ipairs(log_result.stdout) do
+      if line:match("^[a-f0-9]+$") then
+        current_commit_sha = line
+      elseif line:match("^R%d*\t") then
+        local old_path, new_path = line:match("^R%d*\t(.+)\t(.+)$")
+        if old_path and new_path and current_commit_sha then
+          table.insert(renames, {
+            commit = current_commit_sha,
+            old_path = old_path,
+            new_path = new_path,
+          })
+        end
       end
     end
+
+    rename_history_cache[file] = renames
   end
 
   -- Trace back from current path through renames to find path at target commit
@@ -436,6 +460,7 @@ function M.resolve_path_at_commit(file, commit)
   -- Verify the resolved path exists at the commit
   local verify_result = git_exec({ "ls-tree", "--name-only", "-r", commit, "--", current_path })
   if verify_result.code == 0 and verify_result.stdout[1] then
+    resolve_cache[cache_key] = current_path
     return current_path
   end
 
@@ -477,7 +502,7 @@ end
 ---@param file string Path to file
 ---@param callback function|nil Callback with entries or nil on error
 function M.blame_file_async(file, callback)
-  local args = { "blame", "--incremental", "--porcelain", "--", file }
+  local args = { "blame", "--porcelain", "--", file }
 
   M.git_exec_async(args, function(result)
     if result.code == 0 then
@@ -489,7 +514,7 @@ function M.blame_file_async(file, callback)
       local git_root = M.get_git_root()
       if git_root then
         local full_path = git_root .. "/" .. file
-        local stat = vim.loop.fs_stat(full_path)
+        local stat = vim.uv.fs_stat(full_path)
         if stat then
           mtime = stat.mtime.sec
         end

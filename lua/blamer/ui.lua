@@ -33,32 +33,30 @@ function M.setup_highlights()
   }
 
   for _, color in ipairs(colors) do
-    vim.api.nvim_set_hl(0, color.name, { fg = color.fg })
-    vim.api.nvim_set_hl(0, color.name .. "Bold", { fg = color.fg, bold = true })
+    vim.api.nvim_set_hl(0, color.name, { fg = color.fg, default = true })
+    vim.api.nvim_set_hl(0, color.name .. "Bold", { fg = color.fg, bold = true, default = true })
   end
 
-  vim.api.nvim_set_hl(0, "BlamerDate", { fg = "#9999ff" })
-  vim.api.nvim_set_hl(0, "BlamerDateBold", { fg = "#9999ff", bold = true })
-  vim.api.nvim_set_hl(0, "BlamerMessage", { fg = "#555555", italic = true })
-  vim.api.nvim_set_hl(0, "BlamerMessageBold", { fg = "#555555", italic = true, bold = true })
+  vim.api.nvim_set_hl(0, "BlamerDate", { fg = "#9999ff", default = true })
+  vim.api.nvim_set_hl(0, "BlamerDateBold", { fg = "#9999ff", bold = true, default = true })
+  vim.api.nvim_set_hl(0, "BlamerMessage", { fg = "#555555", italic = true, default = true })
+  vim.api.nvim_set_hl(0, "BlamerMessageBold", { fg = "#555555", italic = true, bold = true, default = true })
 end
 
 ---Get color index for commit based on SHA hash
 ---@param commit_colors table
----@param next_color_index number
 ---@param commit string
----@return number, number new_next_color_index
-function M.get_commit_color_index(commit_colors, next_color_index, commit)
+---@return number
+function M.get_commit_color_index(commit_colors, commit)
   if not commit_colors[commit] then
-    -- A git SHA is already a good hash. Just use a part of it.
+    -- A git SHA is already a good hash. Just use the last hex digit.
     local last_char = commit:sub(-1)
     local num_from_hash = tonumber(last_char, 16) or 0
-    -- The result is 0-15, so add 1 to get an index of 1-16.
     local color_index = num_from_hash + 1
     commit_colors[commit] = color_index
-    return color_index, next_color_index
+    return color_index
   end
-  return commit_colors[commit], next_color_index
+  return commit_colors[commit]
 end
 
 ---Get color name for commit

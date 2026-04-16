@@ -70,6 +70,15 @@ local function create_lru_cache(max_size)
     size = 0
   end
 
+  function lru.remove(key)
+    local node = cache[key]
+    if node then
+      remove_node(node)
+      cache[key] = nil
+      size = size - 1
+    end
+  end
+
   function lru.clear_pattern(pattern)
     local node = head.next
     while node ~= tail do
@@ -107,14 +116,14 @@ function M.get_blame(file_path, commit, mtime, head_commit)
   if cached and mtime and (commit == nil or commit == "HEAD") then
     if not cached.mtime or cached.mtime < mtime then
       -- File was modified after cache was created, invalidate it
-      blame_cache.set(key, nil)
+      blame_cache.remove(key)
       return nil
     end
 
     -- Also check if HEAD commit has changed (e.g., after a commit)
     if head_commit and cached.head_commit and cached.head_commit ~= head_commit then
       -- HEAD has moved, invalidate the cache
-      blame_cache.set(key, nil)
+      blame_cache.remove(key)
       return nil
     end
   end

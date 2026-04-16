@@ -11,7 +11,6 @@ local api = vim.api
 ---@field file_path string
 ---@field blame_entries BlameEntry[]
 ---@field commit_colors table<string, number>
----@field next_color_index number
 ---@field blame_buf number
 ---@field view_buf number
 ---@field blame_win number
@@ -56,7 +55,6 @@ function Blamer.new(file_path)
     file_path = file_path,
     blame_entries = {},  -- Will be loaded from cache or on-demand
     commit_colors = {},
-    next_color_index = 1,
     width = 60,
     highlight_ns = api.nvim_create_namespace("blamer_hunk"),
     last_highlighted_commit = nil,
@@ -117,10 +115,7 @@ function Blamer:render_blame_lines()
   local hunks = self.cached_hunks
 
   for _, hunk in ipairs(hunks) do
-    local color_idx
-    color_idx, self.next_color_index = ui.get_commit_color_index(
-      self.commit_colors, self.next_color_index, hunk.commit
-    )
+    local color_idx = ui.get_commit_color_index(self.commit_colors, hunk.commit)
     self.commit_colors[hunk.commit] = color_idx
 
     local commit_short = git.abbreviate_commit(hunk.commit)
@@ -211,11 +206,13 @@ end
 ---@param highlights table[]
 function Blamer:apply_highlights(highlights)
   api.nvim_buf_clear_namespace(self.blame_buf, self.highlight_ns, 0, -1)
-  -- Batch highlight application with extmarks for better performance
   for _, hl in ipairs(highlights) do
     local col_start = math.max(0, hl.col_start)
     local col_end = math.max(col_start, hl.col_end)
-    pcall(api.nvim_buf_add_highlight, self.blame_buf, self.highlight_ns, hl.hl_group, hl.line, col_start, col_end)
+    pcall(api.nvim_buf_set_extmark, self.blame_buf, self.highlight_ns, hl.line, col_start, {
+      end_col = col_end,
+      hl_group = hl.hl_group,
+    })
   end
 end
 
@@ -230,57 +227,62 @@ function Blamer:redraw_hunk(hunk, start_line, is_bold)
   local date_hl = is_bold and "BlamerDateBold" or "BlamerDate"
   local date = git.format_date(hunk.author_time)
 
+  local buf = self.blame_buf
+  local ns = self.highlight_ns
+
   -- Clear existing highlights for this hunk's lines
-  api.nvim_buf_clear_namespace(self.blame_buf, self.highlight_ns, start_line, start_line + hunk.line_count)
+  api.nvim_buf_clear_namespace(buf, ns, start_line, start_line + hunk.line_count)
+
+  local function set_hl(line, col_start, col_end, hl_group)
+    pcall(api.nvim_buf_set_extmark, buf, ns, line, col_start, {
+      end_col = col_end,
+      hl_group = hl_group,
+    })
+  end
 
   if hunk.line_count == 1 then
     local buf_line = start_line
     local commit_hl_end = #"- " + #commit_short
-    api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, commit_hl_end)
+    set_hl(buf_line, 0, commit_hl_end, color)
 
     if is_bold then
       local author_start = #"- " + #commit_short + #" "
       local author_end = author_start + #hunk.author
-      api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, author_start, author_end)
+      set_hl(buf_line, author_start, author_end, color)
     end
 
     local prefix = string.format("- %s %s ", commit_short, hunk.author)
     local msg_start = #prefix
-    api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, message_hl, buf_line, msg_start, msg_start + #hunk.summary)
+    set_hl(buf_line, msg_start, msg_start + #hunk.summary, message_hl)
 
-    -- Add date highlight
-    local line_text = api.nvim_buf_get_lines(self.blame_buf, buf_line, buf_line + 1, false)[1] or ""
+    local line_text = api.nvim_buf_get_lines(buf, buf_line, buf_line + 1, false)[1] or ""
     local date_start = #line_text - #date
-    api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, date_hl, buf_line, date_start, date_start + #date)
+    set_hl(buf_line, date_start, date_start + #date, date_hl)
   else
-    -- Multi-line hunk: wrap message across lines
     for i = 1, hunk.line_count do
       local buf_line = start_line + i - 1
-      local line_text = api.nvim_buf_get_lines(self.blame_buf, buf_line, buf_line + 1, false)[1] or ""
+      local line_text = api.nvim_buf_get_lines(buf, buf_line, buf_line + 1, false)[1] or ""
 
       if i == 1 then
         local commit_hl_end = #"┍ " + #commit_short
-        api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, commit_hl_end)
+        set_hl(buf_line, 0, commit_hl_end, color)
 
         if is_bold then
           local author_start = #"┍ " + #commit_short + #" "
           local author_end = author_start + #hunk.author
-          api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, author_start, author_end)
+          set_hl(buf_line, author_start, author_end, color)
         end
 
-        -- Add date highlight
         local date_start = #line_text - #date
-        api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, date_hl, buf_line, date_start, date_start + #date)
+        set_hl(buf_line, date_start, date_start + #date, date_hl)
       else
-        -- Message lines
         local is_last = (i == hunk.line_count)
         local symbol = is_last and "┕ " or "│ "
-        api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, color, buf_line, 0, #symbol)
+        set_hl(buf_line, 0, #symbol, color)
 
-        -- Extract and highlight message text if present
         local msg_text = line_text:sub(#symbol + 1):match("^%s*(.-)%s*$")
         if msg_text and msg_text ~= "" then
-          api.nvim_buf_add_highlight(self.blame_buf, self.highlight_ns, message_hl, buf_line, #symbol, #symbol + #msg_text)
+          set_hl(buf_line, #symbol, #symbol + #msg_text, message_hl)
         end
       end
     end
@@ -470,7 +472,6 @@ function Blamer:reblame(commit_sha, line, track_hunk)
   self.current_commit = commit_sha
   self.current_filename = resolved_filename
   self.commit_colors = {}
-  self.next_color_index = 1
   self.last_highlighted_commit = nil
   self.cached_hunks = nil
 
@@ -561,7 +562,7 @@ function Blamer:refresh_blame_content()
   end
 
   local cursor_pos = api.nvim_win_get_cursor(self.blame_win)
-  local view = vim.fn.winsaveview()
+  local view = api.nvim_win_call(self.blame_win, vim.fn.winsaveview)
 
   local lines, highlights = self:render_blame_lines()
   vim.bo[self.blame_buf].modifiable = true
@@ -570,7 +571,9 @@ function Blamer:refresh_blame_content()
   self:apply_highlights(highlights)
 
   pcall(api.nvim_win_set_cursor, self.blame_win, cursor_pos)
-  pcall(vim.fn.winrestview, view)
+  api.nvim_win_call(self.blame_win, function()
+    vim.fn.winrestview(view)
+  end)
   self:update_hunk_highlight()
 end
 
@@ -661,7 +664,6 @@ function Blamer:navigate_history(direction)
   self.current_commit = entry.commit
   self.current_filename = entry.filename or self.file_path
   self.commit_colors = {}
-  self.next_color_index = 1
   self.last_highlighted_commit = nil
   self.cached_hunks = nil
   self:update_view_buffer(entry.commit)
@@ -900,6 +902,7 @@ end
 ---Clear cache
 local function cache_clear()
   cache.clear()
+  git.clear_rename_cache()
   vim.notify("Cache cleared", vim.log.levels.INFO, { title = "Blamer" })
 end
 
@@ -1020,7 +1023,8 @@ local function setup()
 
   vim.api.nvim_create_autocmd("DirChanged", {
     callback = function()
-      -- Clear all git root caches when directory changes
+      -- Clear all caches when directory changes (likely branch switch)
+      git.clear_rename_cache()
       for bufnr = 1, vim.fn.bufnr('$') do
         if api.nvim_buf_is_valid(bufnr) then
           git.clear_git_root_cache(bufnr)
